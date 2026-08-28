@@ -1,2 +1,117 @@
-/* For information on how to create your own theme, please refer to:
-http://ionicframework.com/docs/theming/ */
+:root {
+  --bg: #081120;
+  --surface: #0f1b2d;
+  --surface-alt: #13233a;
+  --panel: #172942;
+  --panel-alt: #1d3352;
+  --text: #ebf4ff;
+  --text-muted: #94a9c6;
+  --text-dim: #6f86a6;
+  --accent: #38bdf8;
+  --accent-soft: #0e2c43;
+  --success: #22c55e;
+  --success-soft: #0d2f20;
+  --warning: #f59e0b;
+  --warning-soft: #3c2b0e;
+  --danger: #f43f5e;
+  --border: #27415f;
+  --grid: #20324b;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+
+  --ion-background-color: var(--bg);
+  --ion-text-color: var(--text);
+  --ion-font-family: "Segoe UI", sans-serif;
+}
+
+/* Ensure Tabs and Content respect the background */
+ion-content {
+  --background: var(--bg);
+}
+
+ion-tab-bar {
+  height: calc(65px + env(safe-area-inset-bottom));
+  --background: rgba(15, 27, 45, 0.98);
+  backdrop-filter: blur(15px);
+  border-top: 1px solid var(--border);
+}
+
+ion-tab-button {
+  --color: var(--text-dim);
+  --color-selected: var(--accent);
+}
+
+/* Base Card Styles */
+.card, .mini-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 18px;
+  box-shadow: var(--shadow);
+  margin-bottom: 16px;
+}
+
+.app {
+  background: var(--bg);
+}
+
+/* Splash Screen Animations */
+.web-splash-screen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, #1E1E2F 0%, #0F0F1A 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  animation: fadeOut 0.5s ease-in-out 2s forwards;
+}
+
+.splash-content {
+  animation: float 3s ease-in-out infinite;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.splash-logo {
+  width: 150px;
+  height: 150px;
+  margin-bottom: 20px;
+  animation: pulseLogo 2s infinite;
+}
+
+.splash-title {
+  color: #fff;
+  font-size: 28px;
+  opacity: 0;
+  animation: slideUpFade 0.8s ease-out 0.5s forwards;
+}
+
+@keyframes fadeOut {
+  0%, 99% { opacity: 1; pointer-events: auto; }
+  100% { opacity: 0; pointer-events: none; visibility: hidden; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-10px); }
+}
+
+@keyframes pulseLogo {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 10px rgba(56, 189, 248, 0.3)); }
+  50% { transform: scale(1.05); filter: drop-shadow(0 0 20px rgba(56, 189, 248, 0.6)); }
+}
+
+@keyframes slideUpFade {
+  0% { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* Emergency Mode */
+body.emergency-mode {
+  --bg: #3b0a11;
+  --surface: #5e111a;
+  --border: #f43f5e;
+  --ion-background-color: var(--bg);
+}
