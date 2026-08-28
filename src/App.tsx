@@ -53,9 +53,6 @@ const App: React.FC = () => {
   useSiren();
 
   useEffect(() => {
-    // Hide splash screen after 2.5 seconds
-    setTimeout(() => setShowSplash(false), 2500);
-
     const setupPermissions = async () => {
       if (Capacitor.isNativePlatform()) {
         try {
@@ -81,7 +78,11 @@ const App: React.FC = () => {
       }
     };
 
-    setupPermissions();
+    // Hide splash screen after 2.5 seconds, then ask for permissions
+    setTimeout(() => {
+      setShowSplash(false);
+      setupPermissions();
+    }, 2500);
     
     // Global simulation loop (every 3 seconds)
     const interval = setInterval(() => {
