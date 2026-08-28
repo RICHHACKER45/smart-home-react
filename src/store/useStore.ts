@@ -26,6 +26,7 @@ interface SmartHomeState {
   addLog: (text: string) => void;
   toggleSimulation: () => void;
   runSimulationTick: () => void;
+  pollDevices: () => void;
 }
 
 export const useStore = create<SmartHomeState>((set, get) => {
@@ -135,6 +136,17 @@ export const useStore = create<SmartHomeState>((set, get) => {
         latencyMs: newLatency,
         temperatureHistory: newHistory
       });
+    }),
+
+    pollDevices: () => set((state) => {
+      // Simulate polling network and refreshing values slightly
+      const newLatency = Math.floor(Math.random() * 20) + 5;
+      const newSignal = Math.min(100, Math.floor(state.signalStrength + (Math.random() * 4 - 2)));
+      return {
+        latencyMs: newLatency,
+        signalStrength: newSignal,
+        logs: addLogBase('Manual device poll completed', state.logs)
+      };
     })
   };
 });

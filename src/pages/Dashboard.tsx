@@ -1,9 +1,9 @@
-import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar } from '@ionic/react';
+import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton } from '@ionic/react';
 import { useStore } from '../store/useStore';
 import './Dashboard.css';
 
 const Dashboard: React.FC = () => {
-  const { isLocked, temperature, humidity, isAlarming } = useStore();
+  const { isLocked, temperature, humidity, isAlarming, toggleLock } = useStore();
 
   return (
     <IonPage>
@@ -30,7 +30,7 @@ const Dashboard: React.FC = () => {
           <div className="card">
             <h2>Door Status</h2>
             <div className="door-container">
-              <div className="door-frame">
+              <div className="door-frame" onClick={toggleLock} style={{ cursor: 'pointer' }}>
                 <div className={`door-panel ${!isLocked ? 'unlocked' : ''}`}>
                   <div className="door-knob"></div>
                 </div>
@@ -39,6 +39,15 @@ const Dashboard: React.FC = () => {
             <p style={{ textAlign: 'center', color: isLocked ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>
               {isLocked ? 'LOCKED' : 'UNLOCKED'}
             </p>
+            <IonButton 
+              expand="block" 
+              color={isLocked ? "medium" : "primary"}
+              onClick={toggleLock}
+              disabled={isAlarming}
+              style={{ '--border-radius': '8px', marginTop: '16px' }}
+            >
+              {isLocked ? 'Unlock Door' : 'Lock Door'}
+            </IonButton>
           </div>
 
           <div style={{ display: 'flex', gap: '16px' }}>

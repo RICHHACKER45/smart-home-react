@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E1E2F" />
+      <stop offset="100%" stop-color="#0F0F1A" />
+    </linearGradient>
+
+    <!-- House Gradient -->
+    <linearGradient id="house-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F0FF" />
+      <stop offset="100%" stop-color="#0057FF" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1024" height="1024" fill="url(#bg-grad)" rx="224" />
+
+  <!-- Outer Glow -->
+  <g filter="blur(15px)" opacity="0.4">
+    <path d="M 512 200 L 200 450 L 200 800 L 824 800 L 824 450 Z" fill="none" stroke="#00F0FF" stroke-width="40" stroke-linejoin="round"/>
+  </g>
+
+  <!-- House Outline -->
+  <path d="M 512 250 L 250 480 L 250 780 L 774 780 L 774 480 Z" fill="none" stroke="url(#house-grad)" stroke-width="60" stroke-linecap="round" stroke-linejoin="round" />
+  
+  <!-- Roof Overhang -->
+  <path d="M 180 500 L 512 210 L 844 500" fill="none" stroke="url(#house-grad)" stroke-width="60" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Shield in the center -->
+  <path d="M 512 400 L 400 440 L 400 580 C 400 680 512 750 512 750 C 512 750 624 680 624 580 L 624 440 Z" fill="url(#house-grad)" opacity="0.9" />
+  
+  <!-- Lock keyhole in the shield -->
+  <circle cx="512" cy="530" r="30" fill="#1E1E2F" />
+  <path d="M 497 540 L 490 620 L 534 620 L 527 540 Z" fill="#1E1E2F" />
+</svg>

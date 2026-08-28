@@ -80,21 +80,21 @@ const App: React.FC = () => {
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
           </IonRouterOutlet>
 
-          <IonTabBar slot="bottom">
+          <IonTabBar slot="bottom" className="tab-bar">
             <IonTabButton tab="dashboard" href="/dashboard">
-              <IonIcon aria-hidden="true" icon={home} />
+              <IonIcon aria-hidden="true" icon={home} style={{ color: '#38bdf8' }} />
               <IonLabel>Dashboard</IonLabel>
             </IonTabButton>
             <IonTabButton tab="climate" href="/climate">
-              <IonIcon aria-hidden="true" icon={thermometer} />
+              <IonIcon aria-hidden="true" icon={thermometer} style={{ color: '#f43f5e' }} />
               <IonLabel>Climate</IonLabel>
             </IonTabButton>
             <IonTabButton tab="activity" href="/activity">
-              <IonIcon aria-hidden="true" icon={list} />
+              <IonIcon aria-hidden="true" icon={list} style={{ color: '#f59e0b' }} />
               <IonLabel>Activity</IonLabel>
             </IonTabButton>
             <IonTabButton tab="settings" href="/settings">
-              <IonIcon aria-hidden="true" icon={settings} />
+              <IonIcon aria-hidden="true" icon={settings} style={{ color: '#ebf4ff' }} />
               <IonLabel>Settings</IonLabel>
             </IonTabButton>
           </IonTabBar>
