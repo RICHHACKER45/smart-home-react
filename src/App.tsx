@@ -8,10 +8,13 @@ import {
   IonTabBar,
   IonTabButton,
   IonTabs,
-  setupIonicReact
+  setupIonicReact,
+  useIonAlert
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
 import { home, thermometer, list, settings } from 'ionicons/icons';
+import { LocalNotifications } from '@capacitor/local-notifications';
+import { Capacitor } from '@capacitor/core';
 
 import Dashboard from './pages/Dashboard';
 import Climate from './pages/Climate';
@@ -44,6 +47,7 @@ setupIonicReact();
 const App: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
   const { runSimulationTick } = useStore();
+  const [presentAlert] = useIonAlert();
   
   // Custom hook for the audio siren logic
   useSiren();
@@ -51,6 +55,33 @@ const App: React.FC = () => {
   useEffect(() => {
     // Hide splash screen after 2.5 seconds
     setTimeout(() => setShowSplash(false), 2500);
+
+    const setupPermissions = async () => {
+      if (Capacitor.isNativePlatform()) {
+        try {
+          const permStatus = await LocalNotifications.requestPermissions();
+          
+          if (permStatus.display !== 'granted') {
+            await presentAlert({
+              header: 'Notifications Required',
+              message: 'To receive critical smoke and temperature alerts, please go to your device Settings -> Apps -> Smart Home App -> Permissions and enable Notifications.',
+              buttons: ['OK']
+            });
+          }
+
+          // Then show the battery optimization prompt
+          await presentAlert({
+            header: 'Background Execution',
+            message: 'To ensure the Smart Home Monitor can run continuously in the background and sound alarms, please disable battery optimization for this app in your system settings.',
+            buttons: ['Understood']
+          });
+        } catch (e) {
+          console.error('Error requesting permissions:', e);
+        }
+      }
+    };
+
+    setupPermissions();
     
     // Global simulation loop (every 3 seconds)
     const interval = setInterval(() => {
@@ -58,7 +89,7 @@ const App: React.FC = () => {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [runSimulationTick]);
+  }, [runSimulationTick, presentAlert]);
 
   return (
     <IonApp className="app">
