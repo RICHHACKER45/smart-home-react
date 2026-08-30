@@ -1,9 +1,64 @@
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton } from '@ionic/react';
 import { useStore } from '../store/useStore';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import './Dashboard.css';
+
+const playDoorSound = (isUnlocking: boolean) => {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    
+    if (isUnlocking) {
+      // Unlocking: Two quick ascending tones
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(300, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.1);
+      
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.15);
+    } else {
+      // Locking: Heavy thud
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(150, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.15);
+      
+      gain.gain.setValueAtTime(0, ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(1, ctx.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+      
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.2);
+    }
+  } catch (e) {
+    console.error('AudioContext error:', e);
+  }
+};
 
 const Dashboard: React.FC = () => {
   const { isLocked, temperature, humidity, isAlarming, toggleLock } = useStore();
+
+  const handleDoorInteraction = async () => {
+    if (isAlarming) return;
+    
+    // Trigger medium physical haptic bump
+    try {
+      await Haptics.impact({ style: ImpactStyle.Medium });
+    } catch (e) {}
+
+    // Play synthesized mechanical sound based on the new state
+    playDoorSound(isLocked); // if it WAS locked, we are unlocking
+
+    // Actually toggle the state
+    toggleLock();
+  };
 
   return (
     <IonPage>
@@ -30,7 +85,7 @@ const Dashboard: React.FC = () => {
           <div className="card">
             <h2>Door Status</h2>
             <div className="door-container">
-              <div className="door-frame" onClick={toggleLock} style={{ cursor: 'pointer' }}>
+              <div className="door-frame" onClick={handleDoorInteraction} style={{ cursor: 'pointer' }}>
                 <div className={`door-panel ${!isLocked ? 'unlocked' : ''}`}>
                   <div className="door-knob"></div>
                 </div>
@@ -42,7 +97,7 @@ const Dashboard: React.FC = () => {
             <IonButton 
               expand="block" 
               color={isLocked ? "medium" : "primary"}
-              onClick={toggleLock}
+              onClick={handleDoorInteraction}
               disabled={isAlarming}
               style={{ '--border-radius': '8px', marginTop: '16px' }}
             >

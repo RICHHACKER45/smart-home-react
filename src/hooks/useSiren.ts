@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
+import { Haptics } from '@capacitor/haptics';
 
 export const useSiren = () => {
   const { isAlarming, smokeActive, temperature } = useStore();
@@ -31,9 +32,7 @@ export const useSiren = () => {
           try {
             oscillatorRef.current.stop();
             oscillatorRef.current.disconnect();
-          } catch (e) {
-            // Ignore if already stopped
-          }
+          } catch (e) {}
           oscillatorRef.current = null;
         }
         if (intervalRef.current) {
@@ -45,7 +44,7 @@ export const useSiren = () => {
       stopSound();
 
       if (smokeActive) {
-        // Fast square wave beep (3000Hz)
+        // Fast square wave beep (3000Hz) with sharp haptics
         let isOn = false;
         intervalRef.current = window.setInterval(() => {
           if (isOn) {
@@ -60,11 +59,14 @@ export const useSiren = () => {
             osc.connect(gain);
             osc.start();
             oscillatorRef.current = osc;
+            
+            // Smart Vibration: Sharp pulse for smoke
+            Haptics.vibrate({ duration: 50 }).catch(() => {});
           }
           isOn = !isOn;
         }, 150);
       } else if (temperature >= 45) {
-        // Sawtooth sweep (600Hz to 1200Hz)
+        // Sawtooth sweep (600Hz to 1200Hz) with continuous heavy haptic
         const playSweep = () => {
           const osc = ctx.createOscillator();
           osc.type = 'sawtooth';
@@ -80,6 +82,9 @@ export const useSiren = () => {
           
           osc.start();
           osc.stop(ctx.currentTime + 0.4);
+
+          // Smart Vibration: Longer heavy vibration for temp
+          Haptics.vibrate({ duration: 400 }).catch(() => {});
         };
         
         playSweep();
