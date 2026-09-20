@@ -29,7 +29,8 @@ export interface SmartHomeState {
   isPasskeyModalOpen: boolean;
 
   // Authentication Actions
-  login: (username: string, password: string) => { success: boolean; message?: string };
+  login: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  register: (params: { username: string; email: string; password: string; doorPasskey?: string }) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
 
   // Primary Actions
@@ -101,7 +102,7 @@ export const useStore = create<SmartHomeState>((set, get) => {
     isAlarming: false,
     smokeActive: false,
     temperatureHistory: [24.0, 24.2, 24.5, 24.3, 24.7, 24.8, 25.0, 24.9, 24.8, 24.7, 24.8, 24.8],
-    devices: dbService.getDevices(),
+    devices: dbService.getDevices(initialSession?.id),
     logs: dbService.getActivityLogs(),
     alerts: dbService.getAlerts(),
     simulationActive: true,
@@ -109,12 +110,13 @@ export const useStore = create<SmartHomeState>((set, get) => {
     isPasskeyModalOpen: false,
 
     // Authentication
-    login: (username, password) => {
-      const res = dbService.authenticate(username, password);
+    login: async (identifier, password) => {
+      const res = await dbService.authenticate(identifier, password);
       if (res.success && res.account) {
         set({
           isAuthenticated: true,
           currentUser: res.account,
+          devices: dbService.getDevices(res.account.id),
           logs: dbService.getActivityLogs()
         });
         return { success: true };
@@ -122,11 +124,26 @@ export const useStore = create<SmartHomeState>((set, get) => {
       return { success: false, message: res.message || 'Invalid credentials' };
     },
 
+    register: async (params) => {
+      const res = await dbService.register(params);
+      if (res.success && res.account) {
+        set({
+          isAuthenticated: true,
+          currentUser: res.account,
+          devices: dbService.getDevices(res.account.id),
+          logs: dbService.getActivityLogs()
+        });
+        return { success: true };
+      }
+      return { success: false, message: res.message || 'Registration failed' };
+    },
+
     logout: () => {
       dbService.logout();
       set({
         isAuthenticated: false,
         currentUser: null,
+        devices: dbService.getDevices(),
         logs: dbService.getActivityLogs()
       });
     },

@@ -401,7 +401,7 @@ const Settings: React.FC = () => {
                 <small style={{ color: 'var(--text-muted)' }}>Required before unlocking door</small>
               </div>
               <strong style={{ color: '#38bdf8', fontSize: '16px', letterSpacing: '2px' }}>
-                {dbService.getAccount().doorPasskeyHash}
+                {currentUser?.doorPasskeyHash || dbService.getAccount().doorPasskeyHash || '1234'}
               </strong>
             </div>
             <div style={{ display: 'flex', gap: '10px' }}>

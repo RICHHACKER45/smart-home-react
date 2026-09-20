@@ -31,7 +31,7 @@
 
 .login-header {
   text-align: center;
-  margin-bottom: 24px;
+  margin-bottom: 20px;
 }
 
 .login-logo-wrapper {
@@ -66,6 +66,36 @@
   color: var(--text-dim);
 }
 
+/* Auth Segment Switcher */
+.auth-segment-wrapper {
+  margin-bottom: 20px;
+}
+
+.custom-auth-segment {
+  background: #101c2e;
+  border-radius: 14px;
+  padding: 4px;
+  border: 1px solid rgba(56, 189, 248, 0.15);
+}
+
+.custom-auth-segment .segment-btn {
+  --background: transparent;
+  --background-checked: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  --color: #94a3b8;
+  --color-checked: #ffffff;
+  --indicator-color: transparent;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 13px;
+  min-height: 38px;
+  transition: all 0.2s ease;
+}
+
+.custom-auth-segment .segment-btn ion-icon {
+  font-size: 16px;
+  margin-right: 6px;
+}
+
 .login-error-banner {
   background: rgba(244, 63, 94, 0.15);
   border: 1px solid rgba(244, 63, 94, 0.4);
@@ -81,7 +111,7 @@
 .login-form {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 .input-group {
@@ -96,6 +126,16 @@
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.label-subtext {
+  font-size: 10px;
+  color: #64748b;
+  text-transform: none;
+  font-weight: 400;
 }
 
 .input-wrapper {
@@ -147,6 +187,11 @@
   font-size: 15px;
   margin-top: 8px;
   height: 50px;
+}
+
+.login-submit-btn.signup-btn {
+  --background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  --box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4);
 }
 
 .login-hint-card {

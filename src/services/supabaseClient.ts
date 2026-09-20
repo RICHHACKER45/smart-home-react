@@ -34,7 +34,7 @@ export const supabaseApi = {
   // --- ACCOUNTS & AUTHENTICATION ---
   async getAccount(username: string = 'admin'): Promise<Account | null> {
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/accounts?username=eq.${username}&select=*&limit=1`, {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/accounts?username=eq.${encodeURIComponent(username)}&select=*&limit=1`, {
         headers: getHeaders()
       });
       if (!res.ok) return null;
@@ -56,6 +56,80 @@ export const supabaseApi = {
       return null;
     } catch {
       return null;
+    }
+  },
+
+  async findAccount(identifier: string): Promise<Account | null> {
+    try {
+      const cleanId = identifier.trim().toLowerCase();
+      const isEmail = cleanId.includes('@');
+      const query = isEmail ? `email=eq.${encodeURIComponent(cleanId)}` : `username=eq.${encodeURIComponent(cleanId)}`;
+      
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/accounts?${query}&select=*&limit=1`, {
+        headers: getHeaders()
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data && data.length > 0) {
+        const acc = data[0];
+        return {
+          id: acc.id,
+          username: acc.username,
+          email: acc.email,
+          passwordHash: acc.password_hash,
+          doorPasskeyHash: acc.door_passkey_hash,
+          role: acc.role,
+          status: acc.status,
+          fcmPushToken: acc.fcm_push_token,
+          createdAt: acc.created_at
+        };
+      }
+      return null;
+    } catch {
+      return null;
+    }
+  },
+
+  async createAccount(account: Account): Promise<{ success: boolean; message?: string }> {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/accounts`, {
+        method: 'POST',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          id: account.id,
+          username: account.username,
+          email: account.email || null,
+          password_hash: account.passwordHash,
+          door_passkey_hash: account.doorPasskeyHash || '1234',
+          role: account.role || 'admin',
+          status: account.status || 'active',
+          created_at: account.createdAt || new Date().toISOString()
+        })
+      });
+
+      if (res.ok) {
+        return { success: true };
+      }
+      const err = await res.json().catch(() => ({}));
+      return { success: false, message: err.message || `HTTP ${res.status}: Account creation failed` };
+    } catch (e: any) {
+      return { success: false, message: e?.message || 'Network error creating account' };
+    }
+  },
+
+  async updatePassword(accountId: string, newPassword: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/accounts?id=eq.${accountId}`, {
+        method: 'PATCH',
+        headers: getHeaders(),
+        body: JSON.stringify({
+          password_hash: newPassword,
+          updated_at: new Date().toISOString()
+        })
+      });
+      return res.ok;
+    } catch {
+      return false;
     }
   },
 

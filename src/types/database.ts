@@ -26,6 +26,7 @@ export interface Account {
 
 export interface Device {
   id: string;
+  ownerAccountId?: string;
   macAddress: string;
   name: string;
   deviceType: DeviceType;

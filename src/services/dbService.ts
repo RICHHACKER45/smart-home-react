@@ -97,6 +97,52 @@ const INITIAL_LOGS: ActivityLog[] = [
   }
 ];
 
+// Helper generator for starter devices for a specific account
+const createStarterDevices = (ownerAccountId: string): Device[] => [
+  {
+    id: `dev-door-${ownerAccountId.slice(-6)}`,
+    ownerAccountId,
+    macAddress: `B8:27:EB:${ownerAccountId.slice(-2)}:11:01`,
+    name: 'Front Main Entrance Lock',
+    deviceType: 'door_lock',
+    roomLocation: 'Main Entrance',
+    ipAddress: '192.168.1.101',
+    status: 'active',
+    signalStrength: 98,
+    batteryLevel: 92,
+    lastSeenAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: `dev-climate-${ownerAccountId.slice(-6)}`,
+    ownerAccountId,
+    macAddress: `B8:27:EB:${ownerAccountId.slice(-2)}:11:02`,
+    name: 'Living Room Climate Sensor (DHT22)',
+    deviceType: 'climate_sensor',
+    roomLocation: 'Living Room',
+    ipAddress: '192.168.1.102',
+    status: 'active',
+    signalStrength: 95,
+    batteryLevel: 88,
+    lastSeenAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
+  },
+  {
+    id: `dev-smoke-${ownerAccountId.slice(-6)}`,
+    ownerAccountId,
+    macAddress: `B8:27:EB:${ownerAccountId.slice(-2)}:11:03`,
+    name: 'Kitchen Smoke & Gas Detector (MQ-2)',
+    deviceType: 'smoke_detector',
+    roomLocation: 'Kitchen',
+    ipAddress: '192.168.1.103',
+    status: 'active',
+    signalStrength: 91,
+    batteryLevel: 97,
+    lastSeenAt: new Date().toISOString(),
+    createdAt: new Date().toISOString()
+  }
+];
+
 class DatabaseService {
   private getItem<T>(key: string, defaultValue: T): T {
     try {
@@ -116,23 +162,143 @@ class DatabaseService {
   }
 
   // --- ACCOUNTS & AUTHENTICATION ---
+  getAccounts(): Account[] {
+    const accounts = this.getItem<Account[]>('accounts', [DEFAULT_ADMIN]);
+    // Ensure default admin exists
+    if (!accounts.some(a => a.username === DEFAULT_ADMIN.username || a.id === DEFAULT_ADMIN.id)) {
+      accounts.unshift(DEFAULT_ADMIN);
+      this.setItem('accounts', accounts);
+    }
+    return accounts;
+  }
+
   getAccount(): Account {
-    return this.getItem<Account>('account', DEFAULT_ADMIN);
+    const session = this.getCurrentSession();
+    if (session) return session;
+    const accounts = this.getAccounts();
+    return accounts[0] || DEFAULT_ADMIN;
   }
 
   getCurrentSession(): Account | null {
     return this.getItem<Account | null>('current_session', null);
   }
 
-  authenticate(username: string, password: string): { success: boolean; account?: Account; message?: string } {
-    const acc = this.getAccount();
-    if (acc.username.toLowerCase() === username.trim().toLowerCase() && acc.passwordHash === password) {
-      this.setItem('current_session', acc);
-      this.logActivity(acc.username, 'AUTH', `User "${acc.username}" successfully logged in`, 'SUCCESS');
-      return { success: true, account: acc };
+  async authenticate(identifier: string, password: string): Promise<{ success: boolean; account?: Account; message?: string }> {
+    const cleanId = identifier.trim().toLowerCase();
+    const accounts = this.getAccounts();
+
+    // 1. Try local cache match first
+    let matched = accounts.find(a => 
+      a.username.toLowerCase() === cleanId || 
+      (a.email && a.email.toLowerCase() === cleanId)
+    );
+
+    if (matched) {
+      if (matched.passwordHash === password) {
+        this.setItem('current_session', matched);
+        this.logActivity(matched.username, 'AUTH', `User "${matched.username}" logged in`, 'SUCCESS');
+        return { success: true, account: matched };
+      }
+      this.logActivity(identifier, 'AUTH', `Failed password attempt for "${identifier}"`, 'FAILED');
+      return { success: false, message: 'Incorrect password. Please try again.' };
     }
-    this.logActivity(username || 'Unknown', 'AUTH', `Failed login attempt for username "${username}"`, 'FAILED');
-    return { success: false, message: 'Invalid username or password. Please try again.' };
+
+    // 2. Query Supabase Cloud for remote accounts
+    try {
+      const cloudAccount = await supabaseApi.findAccount(cleanId);
+      if (cloudAccount) {
+        if (cloudAccount.passwordHash === password) {
+          // Cache locally
+          const updated = [...accounts.filter(a => a.id !== cloudAccount.id), cloudAccount];
+          this.setItem('accounts', updated);
+          this.setItem('current_session', cloudAccount);
+          this.logActivity(cloudAccount.username, 'AUTH', `User "${cloudAccount.username}" logged in via Cloud`, 'SUCCESS');
+          return { success: true, account: cloudAccount };
+        }
+        this.logActivity(identifier, 'AUTH', `Failed cloud password attempt for "${identifier}"`, 'FAILED');
+        return { success: false, message: 'Incorrect password. Please try again.' };
+      }
+    } catch {
+      // Fallback
+    }
+
+    this.logActivity(identifier || 'Unknown', 'AUTH', `Login failed: Account "${identifier}" not found`, 'FAILED');
+    return { success: false, message: 'No account found with that username or email.' };
+  }
+
+  async register(params: {
+    username: string;
+    email: string;
+    password: string;
+    doorPasskey?: string;
+  }): Promise<{ success: boolean; account?: Account; message?: string }> {
+    const cleanUsername = params.username.trim();
+    const cleanEmail = params.email.trim().toLowerCase();
+    const cleanPass = params.password.trim();
+    const cleanPin = params.doorPasskey?.trim() || '1234';
+
+    if (!cleanUsername || cleanUsername.length < 3) {
+      return { success: false, message: 'Username must be at least 3 characters.' };
+    }
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Please enter a valid email address.' };
+    }
+    if (!cleanPass || cleanPass.length < 6) {
+      return { success: false, message: 'Password must be at least 6 characters.' };
+    }
+
+    const accounts = this.getAccounts();
+
+    // Check if username or email is already taken locally
+    if (accounts.some(a => a.username.toLowerCase() === cleanUsername.toLowerCase())) {
+      return { success: false, message: 'Username is already taken. Please choose another.' };
+    }
+    if (accounts.some(a => a.email && a.email.toLowerCase() === cleanEmail)) {
+      return { success: false, message: 'Email is already registered. Please sign in instead.' };
+    }
+
+    // Check if taken on Supabase Cloud
+    try {
+      const existingRemote = await supabaseApi.findAccount(cleanUsername);
+      if (existingRemote) {
+        return { success: false, message: 'Username is already in use.' };
+      }
+      const existingEmail = await supabaseApi.findAccount(cleanEmail);
+      if (existingEmail) {
+        return { success: false, message: 'Email is already registered.' };
+      }
+    } catch {}
+
+    const newAccountId = `acc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+    const newAccount: Account = {
+      id: newAccountId,
+      username: cleanUsername,
+      email: cleanEmail,
+      passwordHash: cleanPass,
+      doorPasskeyHash: cleanPin,
+      role: 'admin',
+      status: 'active',
+      createdAt: new Date().toISOString()
+    };
+
+    // Save locally
+    const updatedAccounts = [...accounts, newAccount];
+    this.setItem('accounts', updatedAccounts);
+    this.setItem('current_session', newAccount);
+
+    // Auto-provision devices for this account
+    const existingDevices = this.getDevices();
+    const newDevices = createStarterDevices(newAccountId);
+    this.setItem('devices', [...existingDevices, ...newDevices]);
+
+    // Record activity
+    this.logActivity(cleanUsername, 'AUTH', `New account created for "${cleanUsername}" (${cleanEmail})`, 'SUCCESS');
+
+    // Sync to Supabase in background
+    supabaseApi.createAccount(newAccount).catch(err => console.warn('[Supabase] Account sync failed:', err));
+
+    return { success: true, account: newAccount };
   }
 
   logout(): void {
@@ -151,7 +317,13 @@ class DatabaseService {
   updatePasskey(newPin: string): void {
     const acc = this.getAccount();
     acc.doorPasskeyHash = newPin;
+
+    // Update in local accounts list
+    const accounts = this.getAccounts().map(a => a.id === acc.id ? { ...a, doorPasskeyHash: newPin } : a);
+    this.setItem('accounts', accounts);
+    this.setItem('current_session', acc);
     this.setItem('account', acc);
+
     this.logActivity(acc.username, 'AUTH', `Door passkey updated to ${newPin}`, 'SUCCESS');
 
     // Sync to Supabase Accounts Table
@@ -161,18 +333,40 @@ class DatabaseService {
   updatePassword(newPassword: string): void {
     const acc = this.getAccount();
     acc.passwordHash = newPassword;
+
+    // Update in local accounts list
+    const accounts = this.getAccounts().map(a => a.id === acc.id ? { ...a, passwordHash: newPassword } : a);
+    this.setItem('accounts', accounts);
+    this.setItem('current_session', acc);
     this.setItem('account', acc);
+
     this.logActivity(acc.username, 'AUTH', 'Account password successfully updated', 'SUCCESS');
+
+    // Sync to Supabase
+    supabaseApi.updatePassword(acc.id, newPassword).catch(() => {});
   }
 
   // --- DEVICES ---
-  getDevices(): Device[] {
-    return this.getItem<Device[]>('devices', DEFAULT_DEVICES);
+  getDevices(accountId?: string): Device[] {
+    const currentAcc = accountId || this.getCurrentSession()?.id;
+    const allDevices = this.getItem<Device[]>('devices', DEFAULT_DEVICES);
+
+    if (!currentAcc) {
+      return allDevices;
+    }
+
+    const userDevices = allDevices.filter(d => !d.ownerAccountId || d.ownerAccountId === currentAcc);
+    if (userDevices.length === 0) {
+      // Return default devices if no user-specific devices exist yet
+      return DEFAULT_DEVICES;
+    }
+    return userDevices;
   }
 
   updateDeviceStatus(deviceId: string, status: Device['status']): void {
-    const devices = this.getDevices().map(d => d.id === deviceId ? { ...d, status, lastSeenAt: new Date().toISOString() } : d);
-    this.setItem('devices', devices);
+    const allDevices = this.getItem<Device[]>('devices', DEFAULT_DEVICES);
+    const updated = allDevices.map(d => d.id === deviceId ? { ...d, status, lastSeenAt: new Date().toISOString() } : d);
+    this.setItem('devices', updated);
   }
 
   // --- ACTIVITY LOGS ---
@@ -188,9 +382,11 @@ class DatabaseService {
     deviceId?: string
   ): ActivityLog {
     const logs = this.getActivityLogs();
+    const session = this.getCurrentSession();
     const newLog: ActivityLog = {
       id: Date.now(),
-      actorName,
+      accountId: session?.id,
+      actorName: actorName || session?.username || 'User',
       deviceId,
       eventCategory,
       actionDescription,
@@ -201,7 +397,7 @@ class DatabaseService {
     this.setItem('logs', updated);
 
     // Asynchronously sync with Supabase Cloud DB
-    supabaseApi.insertActivityLog(actorName, eventCategory, actionDescription, statusResult, deviceId).catch(() => {});
+    supabaseApi.insertActivityLog(newLog.actorName!, eventCategory, actionDescription, statusResult, deviceId).catch(() => {});
 
     return newLog;
   }
@@ -258,11 +454,13 @@ class DatabaseService {
   }
 
   resetDatabase(): void {
+    localStorage.removeItem(STORAGE_PREFIX + 'accounts');
     localStorage.removeItem(STORAGE_PREFIX + 'account');
     localStorage.removeItem(STORAGE_PREFIX + 'devices');
     localStorage.removeItem(STORAGE_PREFIX + 'logs');
     localStorage.removeItem(STORAGE_PREFIX + 'alerts');
     localStorage.removeItem(STORAGE_PREFIX + 'current_session');
+    this.setItem('accounts', [DEFAULT_ADMIN]);
     this.setItem('account', DEFAULT_ADMIN);
     this.setItem('devices', DEFAULT_DEVICES);
     this.setItem('logs', INITIAL_LOGS);
@@ -271,7 +469,8 @@ class DatabaseService {
 
   exportDatabaseJson(): string {
     return JSON.stringify({
-      account: this.getAccount(),
+      accounts: this.getAccounts(),
+      currentSession: this.getCurrentSession(),
       devices: this.getDevices(),
       logs: this.getActivityLogs(),
       alerts: this.getAlerts(),
