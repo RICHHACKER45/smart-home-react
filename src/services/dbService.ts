@@ -14,8 +14,16 @@ import {
   LogStatusResult
 } from '../types/database';
 import { supabaseApi } from './supabaseClient';
+import { hashString, verifyHash } from '../utils/crypto';
+import { emailService } from './emailService';
 
 const STORAGE_PREFIX = 'smart_home_db_';
+
+interface PendingOtpData {
+  code: string;
+  expiresAt: number;
+  username: string;
+}
 
 const DEFAULT_ADMIN: Account = {
   id: 'acc-admin-01',
@@ -164,7 +172,6 @@ class DatabaseService {
   // --- ACCOUNTS & AUTHENTICATION ---
   getAccounts(): Account[] {
     const accounts = this.getItem<Account[]>('accounts', [DEFAULT_ADMIN]);
-    // Ensure default admin exists
     if (!accounts.some(a => a.username === DEFAULT_ADMIN.username || a.id === DEFAULT_ADMIN.id)) {
       accounts.unshift(DEFAULT_ADMIN);
       this.setItem('accounts', accounts);
@@ -183,6 +190,111 @@ class DatabaseService {
     return this.getItem<Account | null>('current_session', null);
   }
 
+  // --- OTP EMAIL VERIFICATION ---
+  async requestSignupOtp(email: string, username: string): Promise<{ success: boolean; message?: string; otp?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanUsername = username.trim();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      return { success: false, message: 'Invalid email address.' };
+    }
+
+    // 1. Check Supabase Cloud as the ground truth
+    try {
+      const remoteEmail = await supabaseApi.findAccount(cleanEmail);
+      if (remoteEmail) {
+        return { success: false, message: 'This email is already registered in the database. Please sign in.' };
+      }
+      const remoteUser = await supabaseApi.findAccount(cleanUsername);
+      if (remoteUser) {
+        return { success: false, message: 'This username is already taken. Please choose another.' };
+      }
+
+      // If NOT in Supabase, purge any stale local cached account with this email/username
+      let accounts = this.getAccounts();
+      const cleaned = accounts.filter(
+        a => a.id === DEFAULT_ADMIN.id || 
+        (a.email?.toLowerCase() !== cleanEmail && a.username.toLowerCase() !== cleanUsername.toLowerCase())
+      );
+      this.setItem('accounts', cleaned);
+    } catch {}
+
+    // 2. Check local accounts (excluding default admin)
+    const currentAccounts = this.getAccounts().filter(a => a.id !== DEFAULT_ADMIN.id);
+    if (currentAccounts.some(a => a.email && a.email.toLowerCase() === cleanEmail)) {
+      return { success: false, message: 'This email is already registered. Please sign in.' };
+    }
+    if (currentAccounts.some(a => a.username.toLowerCase() === cleanUsername.toLowerCase())) {
+      return { success: false, message: 'This username is already taken.' };
+    }
+
+    // Generate random 6-digit numeric OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpData: PendingOtpData = {
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes expiry
+      username: cleanUsername
+    };
+
+    // Cache pending OTP in localStorage
+    const pendingMap = this.getItem<Record<string, PendingOtpData>>('pending_otps', {});
+    pendingMap[cleanEmail] = otpData;
+    this.setItem('pending_otps', pendingMap);
+
+    // Send email via Resend API
+    const emailResult = await emailService.sendOtpEmail(cleanEmail, cleanUsername, code);
+
+    if (emailResult.success) {
+      this.logActivity(cleanUsername, 'AUTH', `OTP verification email dispatched to ${cleanEmail}`, 'SUCCESS');
+      return { success: true, otp: code };
+    } else {
+      this.logActivity(cleanUsername, 'AUTH', `Email delivery error for ${cleanEmail}: ${emailResult.error}`, 'FAILED');
+      
+      // Resend Free Tier Sandbox check:
+      // Resend only permits sending to the account owner (joseolinares1443@gmail.com) until a custom domain is verified.
+      if (emailResult.error && (emailResult.error.includes('testing emails to your own email address') || emailResult.error.includes('validation_error'))) {
+        console.info(`%c[RESEND SANDBOX OTP]: ${code}`, 'color: #38bdf8; font-size: 16px; font-weight: bold;');
+        return { 
+          success: true, 
+          otp: code,
+          message: `[Resend Sandbox] Email is restricted to joseolinares1443@gmail.com. Dev OTP: ${code}`
+        };
+      }
+
+      return { 
+        success: false, 
+        message: `Email delivery failed: ${emailResult.error}. (Tip: On Resend free tier, use joseolinares1443@gmail.com or verify a domain)` 
+      };
+    }
+  }
+
+  verifySignupOtp(email: string, enteredCode: string): { success: boolean; message?: string } {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = enteredCode.trim();
+    const pendingMap = this.getItem<Record<string, PendingOtpData>>('pending_otps', {});
+    const record = pendingMap[cleanEmail];
+
+    if (!record) {
+      return { success: false, message: 'No verification code found. Please request a new code.' };
+    }
+
+    if (Date.now() > record.expiresAt) {
+      delete pendingMap[cleanEmail];
+      this.setItem('pending_otps', pendingMap);
+      return { success: false, message: 'Verification code has expired. Please request a new code.' };
+    }
+
+    if (record.code !== cleanCode) {
+      return { success: false, message: 'Incorrect verification code. Please check your email.' };
+    }
+
+    // Clean up used OTP
+    delete pendingMap[cleanEmail];
+    this.setItem('pending_otps', pendingMap);
+
+    return { success: true };
+  }
+
   async authenticate(identifier: string, password: string): Promise<{ success: boolean; account?: Account; message?: string }> {
     const cleanId = identifier.trim().toLowerCase();
     const accounts = this.getAccounts();
@@ -194,7 +306,8 @@ class DatabaseService {
     );
 
     if (matched) {
-      if (matched.passwordHash === password) {
+      const isPasswordValid = await verifyHash(password, matched.passwordHash);
+      if (isPasswordValid) {
         this.setItem('current_session', matched);
         this.logActivity(matched.username, 'AUTH', `User "${matched.username}" logged in`, 'SUCCESS');
         return { success: true, account: matched };
@@ -207,7 +320,8 @@ class DatabaseService {
     try {
       const cloudAccount = await supabaseApi.findAccount(cleanId);
       if (cloudAccount) {
-        if (cloudAccount.passwordHash === password) {
+        const isPasswordValid = await verifyHash(password, cloudAccount.passwordHash);
+        if (isPasswordValid) {
           // Cache locally
           const updated = [...accounts.filter(a => a.id !== cloudAccount.id), cloudAccount];
           this.setItem('accounts', updated);
@@ -249,25 +363,9 @@ class DatabaseService {
 
     const accounts = this.getAccounts();
 
-    // Check if username or email is already taken locally
-    if (accounts.some(a => a.username.toLowerCase() === cleanUsername.toLowerCase())) {
-      return { success: false, message: 'Username is already taken. Please choose another.' };
-    }
-    if (accounts.some(a => a.email && a.email.toLowerCase() === cleanEmail)) {
-      return { success: false, message: 'Email is already registered. Please sign in instead.' };
-    }
-
-    // Check if taken on Supabase Cloud
-    try {
-      const existingRemote = await supabaseApi.findAccount(cleanUsername);
-      if (existingRemote) {
-        return { success: false, message: 'Username is already in use.' };
-      }
-      const existingEmail = await supabaseApi.findAccount(cleanEmail);
-      if (existingEmail) {
-        return { success: false, message: 'Email is already registered.' };
-      }
-    } catch {}
+    // Cryptographically hash password and door passkey
+    const hashedPass = await hashString(cleanPass);
+    const hashedPin = await hashString(cleanPin);
 
     const newAccountId = `acc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -275,15 +373,18 @@ class DatabaseService {
       id: newAccountId,
       username: cleanUsername,
       email: cleanEmail,
-      passwordHash: cleanPass,
-      doorPasskeyHash: cleanPin,
+      passwordHash: hashedPass,
+      doorPasskeyHash: hashedPin,
       role: 'admin',
       status: 'active',
       createdAt: new Date().toISOString()
     };
 
-    // Save locally
-    const updatedAccounts = [...accounts, newAccount];
+    // Save locally (cleaning out any previous stale entries)
+    const updatedAccounts = [
+      ...accounts.filter(a => a.email?.toLowerCase() !== cleanEmail && a.username.toLowerCase() !== cleanUsername.toLowerCase()),
+      newAccount
+    ];
     this.setItem('accounts', updatedAccounts);
     this.setItem('current_session', newAccount);
 
@@ -293,7 +394,7 @@ class DatabaseService {
     this.setItem('devices', [...existingDevices, ...newDevices]);
 
     // Record activity
-    this.logActivity(cleanUsername, 'AUTH', `New account created for "${cleanUsername}" (${cleanEmail})`, 'SUCCESS');
+    this.logActivity(cleanUsername, 'AUTH', `New account created & email verified for "${cleanUsername}" (${cleanEmail})`, 'SUCCESS');
 
     // Sync to Supabase in background
     supabaseApi.createAccount(newAccount).catch(err => console.warn('[Supabase] Account sync failed:', err));
@@ -309,41 +410,41 @@ class DatabaseService {
     localStorage.removeItem(STORAGE_PREFIX + 'current_session');
   }
 
-  verifyPasskey(pin: string): boolean {
+  async verifyPasskey(pin: string): Promise<boolean> {
     const acc = this.getAccount();
-    return acc.doorPasskeyHash === pin;
+    return await verifyHash(pin, acc.doorPasskeyHash);
   }
 
-  updatePasskey(newPin: string): void {
+  async updatePasskey(newPin: string): Promise<void> {
     const acc = this.getAccount();
-    acc.doorPasskeyHash = newPin;
+    const hashedPin = await hashString(newPin);
+    acc.doorPasskeyHash = hashedPin;
 
-    // Update in local accounts list
-    const accounts = this.getAccounts().map(a => a.id === acc.id ? { ...a, doorPasskeyHash: newPin } : a);
+    const accounts = this.getAccounts().map(a => a.id === acc.id ? { ...a, doorPasskeyHash: hashedPin } : a);
     this.setItem('accounts', accounts);
     this.setItem('current_session', acc);
     this.setItem('account', acc);
 
-    this.logActivity(acc.username, 'AUTH', `Door passkey updated to ${newPin}`, 'SUCCESS');
+    this.logActivity(acc.username, 'AUTH', `Door passkey updated (hashed)`, 'SUCCESS');
 
     // Sync to Supabase Accounts Table
-    supabaseApi.updateDoorPasskey(acc.id, newPin).catch(() => {});
+    supabaseApi.updateDoorPasskey(acc.id, hashedPin).catch(() => {});
   }
 
-  updatePassword(newPassword: string): void {
+  async updatePassword(newPassword: string): Promise<void> {
     const acc = this.getAccount();
-    acc.passwordHash = newPassword;
+    const hashedPass = await hashString(newPassword);
+    acc.passwordHash = hashedPass;
 
-    // Update in local accounts list
-    const accounts = this.getAccounts().map(a => a.id === acc.id ? { ...a, passwordHash: newPassword } : a);
+    const accounts = this.getAccounts().map(a => a.id === acc.id ? { ...a, passwordHash: hashedPass } : a);
     this.setItem('accounts', accounts);
     this.setItem('current_session', acc);
     this.setItem('account', acc);
 
-    this.logActivity(acc.username, 'AUTH', 'Account password successfully updated', 'SUCCESS');
+    this.logActivity(acc.username, 'AUTH', 'Account password updated (hashed)', 'SUCCESS');
 
     // Sync to Supabase
-    supabaseApi.updatePassword(acc.id, newPassword).catch(() => {});
+    supabaseApi.updatePassword(acc.id, hashedPass).catch(() => {});
   }
 
   // --- DEVICES ---

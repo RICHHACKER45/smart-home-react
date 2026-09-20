@@ -30,6 +30,8 @@ export interface SmartHomeState {
 
   // Authentication Actions
   login: (identifier: string, password: string) => Promise<{ success: boolean; message?: string }>;
+  requestOtp: (email: string, username: string) => Promise<{ success: boolean; message?: string; otp?: string }>;
+  verifyOtp: (email: string, code: string) => { success: boolean; message?: string };
   register: (params: { username: string; email: string; password: string; doorPasskey?: string }) => Promise<{ success: boolean; message?: string }>;
   logout: () => void;
 
@@ -122,6 +124,14 @@ export const useStore = create<SmartHomeState>((set, get) => {
         return { success: true };
       }
       return { success: false, message: res.message || 'Invalid credentials' };
+    },
+
+    requestOtp: async (email, username) => {
+      return await dbService.requestSignupOtp(email, username);
+    },
+
+    verifyOtp: (email, code) => {
+      return dbService.verifySignupOtp(email, code);
     },
 
     register: async (params) => {

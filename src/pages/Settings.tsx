@@ -98,11 +98,11 @@ const Settings: React.FC = () => {
         'Cancel',
         {
           text: 'Update Password',
-          handler: (data) => {
+          handler: async (data) => {
             if (data.newPassword && data.newPassword.length >= 6) {
-              dbService.updatePassword(data.newPassword);
+              await dbService.updatePassword(data.newPassword);
               presentToast({
-                message: 'Password updated successfully!',
+                message: 'Password updated successfully (hashed)!',
                 duration: 2500,
                 color: 'success'
               });
@@ -153,11 +153,11 @@ const Settings: React.FC = () => {
         'Cancel',
         {
           text: 'Save PIN',
-          handler: (data) => {
+          handler: async (data) => {
             if (data.newPin && data.newPin.length === 4) {
-              dbService.updatePasskey(data.newPin);
+              await dbService.updatePasskey(data.newPin);
               presentToast({
-                message: `Passkey updated to: ${data.newPin}`,
+                message: `Passkey updated to: ${data.newPin} (hashed)`,
                 duration: 2500,
                 color: 'success'
               });

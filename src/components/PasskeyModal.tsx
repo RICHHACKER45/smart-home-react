@@ -39,7 +39,7 @@ export const PasskeyModal: React.FC<PasskeyModalProps> = ({
 
     if (newPin.length === 4) {
       // Validate PIN
-      const isValid = dbService.verifyPasskey(newPin);
+      const isValid = await dbService.verifyPasskey(newPin);
       if (isValid) {
         try {
           await Haptics.notification({ type: NotificationType.Success });

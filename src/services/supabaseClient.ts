@@ -5,8 +5,8 @@
 
 import { Account, Device, ActivityLog, EmergencyAlert } from '../types/database';
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'https://ycuysrhrtkyvfjnormgd.supabase.co';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InljdXlzcmhydGt5dmZqbm9ybWdkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk4Nzk5OTEsImV4cCI6MjEwNTQ1NTk5MX0.go_GSVau44xfX3gVaEAE_fYXe4b4CkZXPWnPLGEbygY';
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 const getHeaders = () => ({
   'Content-Type': 'application/json',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   IonPage, 
   IonContent, 
@@ -20,7 +20,11 @@ import {
   shieldCheckmarkOutline,
   personAddOutline,
   sparklesOutline,
-  logInOutline
+  logInOutline,
+  arrowBackOutline,
+  refreshOutline,
+  checkmarkCircleOutline,
+  alertCircleOutline
 } from 'ionicons/icons';
 import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { useStore } from '../store/useStore';
@@ -31,8 +35,8 @@ interface LoginProps {
 }
 
 const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
-  const { login, register } = useStore();
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
+  const { login, requestOtp, verifyOtp, register } = useStore();
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'otp_verify'>('signin');
   
   // Sign In State
   const [signinIdentifier, setSigninIdentifier] = useState<string>('admin');
@@ -45,11 +49,26 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [signupConfirmPass, setSignupConfirmPass] = useState<string>('');
   const [signupPin, setSignupPin] = useState<string>('1234');
   
+  // OTP Verification State
+  const [enteredOtp, setEnteredOtp] = useState<string>('');
+  const [resendCooldown, setResendCooldown] = useState<number>(0);
+
   // Common UI State
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [presentToast] = useIonToast();
+
+  // Cooldown countdown effect
+  useEffect(() => {
+    let timer: any;
+    if (resendCooldown > 0) {
+      timer = setInterval(() => {
+        setResendCooldown((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -86,7 +105,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
   };
 
-  const handleSignUp = async (e: React.FormEvent) => {
+  const handleInitiateSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage('');
 
@@ -120,7 +139,57 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       await Haptics.impact({ style: ImpactStyle.Medium });
     } catch {}
 
-    const result = await register({
+    // Request OTP via Resend API
+    const otpRes = await requestOtp(signupEmail, signupUsername);
+    setIsLoading(false);
+
+    if (otpRes.success) {
+      try {
+        await Haptics.notification({ type: NotificationType.Success });
+      } catch {}
+      setAuthMode('otp_verify');
+      setResendCooldown(60);
+      setEnteredOtp('');
+      presentToast({
+        message: otpRes.message || `Verification code sent to ${signupEmail}!`,
+        duration: otpRes.message ? 6000 : 3500,
+        color: otpRes.message ? 'warning' : 'primary'
+      });
+    } else {
+      try {
+        await Haptics.notification({ type: NotificationType.Error });
+      } catch {}
+      setErrorMessage(otpRes.message || 'Failed to dispatch verification email.');
+    }
+  };
+
+  const handleVerifyOtpAndRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+
+    if (!enteredOtp || enteredOtp.trim().length !== 6) {
+      setErrorMessage('Please enter the full 6-digit verification code.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await Haptics.impact({ style: ImpactStyle.Medium });
+    } catch {}
+
+    // 1. Verify OTP locally & against expiry
+    const verifyResult = verifyOtp(signupEmail, enteredOtp.trim());
+    if (!verifyResult.success) {
+      setIsLoading(false);
+      try {
+        await Haptics.notification({ type: NotificationType.Error });
+      } catch {}
+      setErrorMessage(verifyResult.message || 'Invalid verification code.');
+      return;
+    }
+
+    // 2. Finalize registration with hashed credentials
+    const registerResult = await register({
       username: signupUsername,
       email: signupEmail,
       password: signupPassword,
@@ -129,13 +198,13 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
 
     setIsLoading(false);
 
-    if (result.success) {
+    if (registerResult.success) {
       try {
         await Haptics.notification({ type: NotificationType.Success });
       } catch {}
       presentToast({
-        message: `Account created! Welcome, ${signupUsername}!`,
-        duration: 2500,
+        message: `🎉 Account activated! Welcome to Smart Home, ${signupUsername}!`,
+        duration: 3000,
         color: 'success'
       });
       onLoginSuccess();
@@ -143,7 +212,27 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       try {
         await Haptics.notification({ type: NotificationType.Error });
       } catch {}
-      setErrorMessage(result.message || 'Registration failed.');
+      setErrorMessage(registerResult.message || 'Account creation failed.');
+    }
+  };
+
+  const handleResendOtp = async () => {
+    if (resendCooldown > 0 || isLoading) return;
+
+    setIsLoading(true);
+    setErrorMessage('');
+    const res = await requestOtp(signupEmail, signupUsername);
+    setIsLoading(false);
+
+    if (res.success) {
+      setResendCooldown(60);
+      presentToast({
+        message: `New verification code sent to ${signupEmail}`,
+        duration: 2500,
+        color: 'success'
+      });
+    } else {
+      setErrorMessage(res.message || 'Failed to resend code.');
     }
   };
 
@@ -169,35 +258,38 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               <p className="login-subtitle">Secure Access & Device Monitor</p>
             </div>
 
-            {/* Auth Mode Toggle Tabs */}
-            <div className="auth-segment-wrapper">
-              <IonSegment 
-                value={authMode} 
-                onIonChange={(e) => {
-                  setAuthMode(e.detail.value as 'signin' | 'signup');
-                  setErrorMessage('');
-                }}
-                className="custom-auth-segment"
-              >
-                <IonSegmentButton value="signin" className="segment-btn">
-                  <IonIcon icon={logInOutline} />
-                  <IonLabel>Sign In</IonLabel>
-                </IonSegmentButton>
-                <IonSegmentButton value="signup" className="segment-btn">
-                  <IonIcon icon={personAddOutline} />
-                  <IonLabel>Sign Up</IonLabel>
-                </IonSegmentButton>
-              </IonSegment>
-            </div>
+            {/* Auth Mode Toggle Tabs (Hidden during OTP step) */}
+            {authMode !== 'otp_verify' && (
+              <div className="auth-segment-wrapper">
+                <IonSegment 
+                  value={authMode} 
+                  onIonChange={(e) => {
+                    setAuthMode(e.detail.value as 'signin' | 'signup');
+                    setErrorMessage('');
+                  }}
+                  className="custom-auth-segment"
+                >
+                  <IonSegmentButton value="signin" className="segment-btn">
+                    <IonIcon icon={logInOutline} />
+                    <IonLabel>Sign In</IonLabel>
+                  </IonSegmentButton>
+                  <IonSegmentButton value="signup" className="segment-btn">
+                    <IonIcon icon={personAddOutline} />
+                    <IonLabel>Sign Up</IonLabel>
+                  </IonSegmentButton>
+                </IonSegment>
+              </div>
+            )}
 
             {/* Error Banner */}
             {errorMessage && (
               <div className="login-error-banner shake-animation">
+                <IonIcon icon={alertCircleOutline} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
                 {errorMessage}
               </div>
             )}
 
-            {/* SIGN IN FORM */}
+            {/* 1. SIGN IN FORM */}
             {authMode === 'signin' && (
               <form onSubmit={handleSignIn} className="login-form">
                 <div className="input-group">
@@ -255,9 +347,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               </form>
             )}
 
-            {/* SIGN UP FORM */}
+            {/* 2. SIGN UP FORM */}
             {authMode === 'signup' && (
-              <form onSubmit={handleSignUp} className="login-form">
+              <form onSubmit={handleInitiateSignUp} className="login-form">
                 <div className="input-group">
                   <IonLabel className="input-label">Username</IonLabel>
                   <div className="input-wrapper">
@@ -265,7 +357,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     <IonInput
                       type="text"
                       value={signupUsername}
-                      placeholder="Choose a username"
+                      placeholder="Choose a username (e.g. alex)"
                       onIonInput={(e) => setSignupUsername(e.detail.value!)}
                       required
                       className="custom-input"
@@ -280,7 +372,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     <IonInput
                       type="email"
                       value={signupEmail}
-                      placeholder="e.g. user@example.com"
+                      placeholder="e.g. your-email@gmail.com"
                       onIonInput={(e) => setSignupEmail(e.detail.value!)}
                       required
                       className="custom-input"
@@ -350,14 +442,90 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   disabled={isLoading}
                 >
                   {isLoading ? (
-                    'Creating Account...'
+                    'Sending Code...'
                   ) : (
                     <>
-                      <IonIcon icon={personAddOutline} slot="start" />
-                      Create Account
+                      <IonIcon icon={mailOutline} slot="start" />
+                      Send Verification Code
                     </>
                   )}
                 </IonButton>
+              </form>
+            )}
+
+            {/* 3. OTP VERIFICATION FORM */}
+            {authMode === 'otp_verify' && (
+              <form onSubmit={handleVerifyOtpAndRegister} className="login-form otp-form">
+                <div className="otp-info-card">
+                  <div className="otp-icon-circle">
+                    <IonIcon icon={mailOutline} />
+                  </div>
+                  <h3 className="otp-title">Verify Your Email</h3>
+                  <p className="otp-description">
+                    We sent a 6-digit confirmation code to:
+                    <strong className="otp-target-email">{signupEmail}</strong>
+                  </p>
+                </div>
+
+                <div className="input-group">
+                  <IonLabel className="input-label" style={{ textAlign: 'center' }}>
+                    Enter 6-Digit Code
+                  </IonLabel>
+                  <div className="otp-input-wrapper">
+                    <IonInput
+                      type="text"
+                      inputmode="numeric"
+                      maxlength={6}
+                      value={enteredOtp}
+                      placeholder="------"
+                      onIonInput={(e) => setEnteredOtp(e.detail.value || '')}
+                      required
+                      className="otp-code-input"
+                      autofocus
+                    />
+                  </div>
+                  <small className="otp-hint-text">Valid for 10 minutes</small>
+                </div>
+
+                <IonButton 
+                  type="submit" 
+                  expand="block" 
+                  className="login-submit-btn signup-btn" 
+                  disabled={isLoading || enteredOtp.length !== 6}
+                >
+                  {isLoading ? (
+                    'Verifying...'
+                  ) : (
+                    <>
+                      <IonIcon icon={checkmarkCircleOutline} slot="start" />
+                      Verify & Activate Account
+                    </>
+                  )}
+                </IonButton>
+
+                <div className="otp-actions-row">
+                  <button 
+                    type="button" 
+                    className="otp-action-btn"
+                    onClick={handleResendOtp}
+                    disabled={resendCooldown > 0 || isLoading}
+                  >
+                    <IonIcon icon={refreshOutline} />
+                    {resendCooldown > 0 ? `Resend code in ${resendCooldown}s` : 'Resend Email Code'}
+                  </button>
+
+                  <button 
+                    type="button" 
+                    className="otp-action-btn back-btn"
+                    onClick={() => {
+                      setAuthMode('signup');
+                      setErrorMessage('');
+                    }}
+                  >
+                    <IonIcon icon={arrowBackOutline} />
+                    Change Email
+                  </button>
+                </div>
               </form>
             )}
 
