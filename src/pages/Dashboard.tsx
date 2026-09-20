@@ -1,5 +1,8 @@
-import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton } from '@ionic/react';
+import React from 'react';
+import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton, IonIcon } from '@ionic/react';
+import { lockClosed, lockOpen, keyOutline, warningOutline } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
+import { PasskeyModal } from '../components/PasskeyModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import './Dashboard.css';
 
@@ -13,7 +16,7 @@ const playDoorSound = (isUnlocking: boolean) => {
     gain.connect(ctx.destination);
     
     if (isUnlocking) {
-      // Unlocking: Two quick ascending tones
+      // Unlocking: Two ascending tones
       osc.type = 'triangle';
       osc.frequency.setValueAtTime(300, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(600, ctx.currentTime + 0.1);
@@ -25,7 +28,7 @@ const playDoorSound = (isUnlocking: boolean) => {
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.15);
     } else {
-      // Locking: Heavy thud
+      // Locking: Deep mechanical click
       osc.type = 'sine';
       osc.frequency.setValueAtTime(150, ctx.currentTime);
       osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.15);
@@ -43,21 +46,28 @@ const playDoorSound = (isUnlocking: boolean) => {
 };
 
 const Dashboard: React.FC = () => {
-  const { isLocked, temperature, humidity, isAlarming, toggleLock } = useStore();
+  const { 
+    isLocked, 
+    temperature, 
+    humidity, 
+    isAlarming, 
+    isPasskeyModalOpen,
+    openPasskeyModal,
+    closePasskeyModal,
+    executeAuthenticatedDoorToggle 
+  } = useStore();
 
-  const handleDoorInteraction = async () => {
+  const handleDoorPrompt = async () => {
     if (isAlarming) return;
-    
-    // Trigger medium physical haptic bump
     try {
-      await Haptics.impact({ style: ImpactStyle.Medium });
-    } catch (e) {}
+      await Haptics.impact({ style: ImpactStyle.Light });
+    } catch {}
+    openPasskeyModal();
+  };
 
-    // Play synthesized mechanical sound based on the new state
-    playDoorSound(isLocked); // if it WAS locked, we are unlocking
-
-    // Actually toggle the state
-    toggleLock();
+  const handlePasskeySuccess = async () => {
+    playDoorSound(isLocked);
+    await executeAuthenticatedDoorToggle();
   };
 
   return (
@@ -75,51 +85,97 @@ const Dashboard: React.FC = () => {
         </IonHeader>
         
         <div style={{ padding: '20px' }}>
+          {/* Emergency Alert Card */}
           {isAlarming && (
-            <div className="card" style={{ border: '1px solid var(--danger)', backgroundColor: 'var(--surface)' }}>
-              <h2 style={{ color: 'var(--danger)', marginTop: 0 }}>🚨 EMERGENCY ALARM</h2>
-              <p style={{ color: 'var(--text-dim)', marginBottom: 0 }}>Smoke or extreme temperature detected! Door has been forcefully unlocked.</p>
+            <div className="card" style={{ border: '2px solid var(--danger)', backgroundColor: 'rgba(244, 63, 94, 0.12)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <IonIcon icon={warningOutline} style={{ fontSize: '28px', color: 'var(--danger)' }} />
+                <div>
+                  <h2 style={{ color: 'var(--danger)', margin: 0, fontSize: '18px' }}>🚨 EMERGENCY ALARM ACTIVE</h2>
+                  <p style={{ color: 'var(--text-dim)', margin: '4px 0 0 0', fontSize: '13px' }}>
+                    Smoke or extreme heat detected! Door failsafe has automatically unlocked for safety.
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
+          {/* Door Status Card with Security Passkey Badge */}
           <div className="card">
-            <h2>Door Status</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2 style={{ margin: 0 }}>Front Door Security</h2>
+              <span style={{ 
+                fontSize: '11px', 
+                background: 'rgba(56, 189, 248, 0.15)', 
+                color: '#38bdf8', 
+                padding: '4px 8px', 
+                borderRadius: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px'
+              }}>
+                <IonIcon icon={keyOutline} /> Passkey Protected
+              </span>
+            </div>
+
             <div className="door-container">
-              <div className="door-frame" onClick={handleDoorInteraction} style={{ cursor: 'pointer' }}>
+              <div className="door-frame" onClick={handleDoorPrompt} style={{ cursor: 'pointer' }}>
                 <div className={`door-panel ${!isLocked ? 'unlocked' : ''}`}>
                   <div className="door-knob"></div>
                 </div>
               </div>
             </div>
-            <p style={{ textAlign: 'center', color: isLocked ? 'var(--success)' : 'var(--warning)', fontWeight: 'bold' }}>
-              {isLocked ? 'LOCKED' : 'UNLOCKED'}
-            </p>
+
+            <div style={{ textAlign: 'center', marginTop: '8px' }}>
+              <span style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                color: isLocked ? 'var(--success)' : 'var(--warning)', 
+                fontWeight: 'bold',
+                fontSize: '16px'
+              }}>
+                <IonIcon icon={isLocked ? lockClosed : lockOpen} />
+                {isLocked ? 'SECURELY LOCKED' : 'UNLOCKED'}
+              </span>
+            </div>
+
             <IonButton 
               expand="block" 
-              color={isLocked ? "medium" : "primary"}
-              onClick={handleDoorInteraction}
+              color={isLocked ? "primary" : "warning"}
+              onClick={handleDoorPrompt}
               disabled={isAlarming}
-              style={{ '--border-radius': '8px', marginTop: '16px' }}
+              style={{ '--border-radius': '12px', marginTop: '18px' }}
             >
-              {isLocked ? 'Unlock Door' : 'Lock Door'}
+              <IonIcon icon={isLocked ? lockOpen : lockClosed} slot="start" />
+              {isLocked ? 'Unlock with Passkey' : 'Lock with Passkey'}
             </IonButton>
           </div>
 
+          {/* Climate Telemetry Cards */}
           <div style={{ display: 'flex', gap: '16px' }}>
             <div className="mini-card" style={{ flex: 1 }}>
-              <h3 style={{ color: 'var(--text-dim)', margin: '0 0 10px 0', fontSize: '14px' }}>Temperature</h3>
-              <div style={{ fontSize: '24px', fontWeight: 'bold', color: temperature >= 45 ? 'var(--danger)' : 'var(--text)' }}>
+              <h3 style={{ color: 'var(--text-dim)', margin: '0 0 10px 0', fontSize: '13px' }}>Temperature</h3>
+              <div style={{ fontSize: '26px', fontWeight: 'bold', color: temperature >= 45 ? 'var(--danger)' : 'var(--text)' }}>
                 {temperature}°C
               </div>
             </div>
             <div className="mini-card" style={{ flex: 1 }}>
-              <h3 style={{ color: 'var(--text-dim)', margin: '0 0 10px 0', fontSize: '14px' }}>Humidity</h3>
-              <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
+              <h3 style={{ color: 'var(--text-dim)', margin: '0 0 10px 0', fontSize: '13px' }}>Humidity</h3>
+              <div style={{ fontSize: '26px', fontWeight: 'bold', color: 'var(--accent)' }}>
                 {humidity}%
               </div>
             </div>
           </div>
         </div>
+
+        {/* Security Passkey Entry Modal */}
+        <PasskeyModal
+          isOpen={isPasskeyModalOpen}
+          onClose={closePasskeyModal}
+          onSuccess={handlePasskeySuccess}
+          targetActionName={isLocked ? 'Door Unlock' : 'Door Lock'}
+        />
       </IonContent>
     </IonPage>
   );

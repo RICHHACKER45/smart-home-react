@@ -1,11 +1,15 @@
 import { create } from 'zustand';
+import { dbService } from '../services/dbService';
+import { 
+  getHardwareConfig, 
+  fetchESP32Status, 
+  sendESP32DoorCommand, 
+  resetESP32Alarm,
+  HardwareConfig 
+} from '../services/hardwareService';
+import { Device, ActivityLog, EmergencyAlert } from '../types/database';
 
-export interface LogEntry {
-  text: string;
-  time: string;
-}
-
-interface SmartHomeState {
+export interface SmartHomeState {
   isLocked: boolean;
   temperature: number;
   humidity: number;
@@ -15,18 +19,34 @@ interface SmartHomeState {
   isAlarming: boolean;
   smokeActive: boolean;
   temperatureHistory: number[];
-  logs: LogEntry[];
+  devices: Device[];
+  logs: ActivityLog[];
+  alerts: EmergencyAlert[];
   simulationActive: boolean;
+  hardwareConfig: HardwareConfig;
+  isPasskeyModalOpen: boolean;
 
-  // Actions
+  // Primary Actions
+  openPasskeyModal: () => void;
+  closePasskeyModal: () => void;
+  executeAuthenticatedDoorToggle: () => Promise<void>;
   toggleLock: () => void;
   increaseTemp: (amount: number) => void;
+  setExactTemperature: (temp: number) => void;
+  setExactHumidity: (hum: number) => void;
   simulateSmoke: () => void;
+  simulateExtremeHeat: () => void;
   resetSystem: () => void;
-  addLog: (text: string) => void;
+  addLog: (text: string, category?: ActivityLog['eventCategory']) => void;
   toggleSimulation: () => void;
   runSimulationTick: () => void;
-  pollDevices: () => void;
+  pollDevices: () => Promise<void>;
+
+  // Hardware Configuration & Testing Helpers
+  updateHardwareConfig: (config: Partial<HardwareConfig>) => void;
+  seedDemoLogs: () => void;
+  clearDatabaseLogs: () => void;
+  refreshFromDatabase: () => void;
 }
 
 export const useStore = create<SmartHomeState>((set, get) => {
@@ -39,19 +59,26 @@ export const useStore = create<SmartHomeState>((set, get) => {
     let isLocked = state.isLocked ?? current.isLocked;
 
     if (temp >= 45 || smoke) {
+      if (!isAlarming) {
+        dbService.createAlert(
+          smoke ? 'SMOKE_DETECTED' : 'CRITICAL_HEAT', 
+          smoke ? 'Dense Smoke Detected' : `${temp}°C High Heat`
+        );
+      }
       isAlarming = true;
       isLocked = false;
       document.body.classList.add('emergency-mode');
     } else if (!current.isAlarming) {
-       document.body.classList.remove('emergency-mode');
+      document.body.classList.remove('emergency-mode');
     }
 
-    return { ...state, isAlarming, isLocked };
-  };
-
-  const addLogBase = (text: string, currentLogs: LogEntry[]) => {
-    const newLog = { text, time: new Date().toLocaleTimeString() };
-    return [newLog, ...currentLogs].slice(0, 50); // Keep last 50 logs
+    return { 
+      ...state, 
+      isAlarming, 
+      isLocked,
+      logs: dbService.getActivityLogs(),
+      alerts: dbService.getAlerts()
+    };
   };
 
   return {
@@ -63,37 +90,93 @@ export const useStore = create<SmartHomeState>((set, get) => {
     networkHealth: 96,
     isAlarming: false,
     smokeActive: false,
-    temperatureHistory: Array(12).fill(24.8),
-    logs: [],
+    temperatureHistory: [24.0, 24.2, 24.5, 24.3, 24.7, 24.8, 25.0, 24.9, 24.8, 24.7, 24.8, 24.8],
+    devices: dbService.getDevices(),
+    logs: dbService.getActivityLogs(),
+    alerts: dbService.getAlerts(),
     simulationActive: true,
+    hardwareConfig: getHardwareConfig(),
+    isPasskeyModalOpen: false,
 
-    toggleLock: () => set((state) => {
-      if (state.isAlarming) return {}; // Cannot lock during alarm
+    openPasskeyModal: () => set({ isPasskeyModalOpen: true }),
+    closePasskeyModal: () => set({ isPasskeyModalOpen: false }),
+
+    executeAuthenticatedDoorToggle: async () => {
+      const state = get();
+      if (state.isAlarming) return;
+
       const newLocked = !state.isLocked;
-      return checkSafetyRules({
+
+      // If live hardware is configured, send command to ESP32
+      if (state.hardwareConfig.mode === 'hardware') {
+        const res = await sendESP32DoorCommand(state.hardwareConfig.esp32Ip, newLocked ? 'lock' : 'unlock');
+        if (!res.success) {
+          dbService.logActivity('Hardware Error', 'DOOR', `ESP32 door control failed: ${res.message}`, 'FAILED');
+        }
+      }
+
+      dbService.logActivity(
+        'admin', 
+        'DOOR', 
+        `Door ${newLocked ? 'Locked' : 'Unlocked'} via Passkey Verification`, 
+        'SUCCESS'
+      );
+
+      set(checkSafetyRules({
         isLocked: newLocked,
-        logs: addLogBase(`Door ${newLocked ? 'Locked' : 'Unlocked'}`, state.logs)
-      });
-    }),
+        isPasskeyModalOpen: false
+      }));
+    },
+
+    toggleLock: () => {
+      const state = get();
+      if (state.isAlarming) return;
+      // Open security passkey modal instead of direct bypass
+      set({ isPasskeyModalOpen: true });
+    },
 
     increaseTemp: (amount) => set((state) => {
       const newTemp = Number((state.temperature + amount).toFixed(1));
+      dbService.logActivity('Tester', 'CLIMATE', `Manual temp change (+${amount}°C) to ${newTemp}°C`);
       return checkSafetyRules({
-        temperature: newTemp,
-        logs: addLogBase(`Temperature increased by ${amount}°C to ${newTemp}°C`, state.logs)
+        temperature: newTemp
       });
     }),
 
-    simulateSmoke: () => set((state) => {
+    setExactTemperature: (temp) => set(() => {
+      const formatted = Number(temp.toFixed(1));
+      dbService.logActivity('Tester', 'CLIMATE', `Injected exact temperature: ${formatted}°C`);
       return checkSafetyRules({
-        smokeActive: true,
-        logs: addLogBase('Smoke detected!', state.logs)
+        temperature: formatted
+      });
+    }),
+
+    setExactHumidity: (hum) => set(() => {
+      const formatted = Math.max(0, Math.min(100, Math.round(hum)));
+      dbService.logActivity('Tester', 'CLIMATE', `Injected exact humidity: ${formatted}%`);
+      return { humidity: formatted };
+    }),
+
+    simulateSmoke: () => set(() => {
+      return checkSafetyRules({
+        smokeActive: true
+      });
+    }),
+
+    simulateExtremeHeat: () => set(() => {
+      return checkSafetyRules({
+        temperature: 55.0
       });
     }),
 
     resetSystem: () => {
       document.body.classList.remove('emergency-mode');
-      set((state) => ({
+      const state = get();
+      if (state.hardwareConfig.mode === 'hardware') {
+        resetESP32Alarm(state.hardwareConfig.esp32Ip);
+      }
+      dbService.logActivity('admin', 'SYSTEM', 'System emergency reset executed to normal state');
+      set((s) => ({
         isLocked: true,
         temperature: 24.8,
         humidity: 47,
@@ -103,32 +186,35 @@ export const useStore = create<SmartHomeState>((set, get) => {
         isAlarming: false,
         smokeActive: false,
         temperatureHistory: Array(12).fill(24.8),
-        logs: addLogBase('System reset to default state', state.logs)
+        logs: dbService.getActivityLogs(),
+        alerts: dbService.getAlerts()
       }));
     },
 
-    addLog: (text) => set((state) => ({
-      logs: addLogBase(text, state.logs)
-    })),
+    addLog: (text, category = 'SYSTEM') => {
+      dbService.logActivity('App User', category, text);
+      set({ logs: dbService.getActivityLogs() });
+    },
 
-    toggleSimulation: () => set((state) => ({
-      simulationActive: !state.simulationActive,
-      logs: addLogBase(`Simulation ${!state.simulationActive ? 'Started' : 'Stopped'}`, state.logs)
-    })),
+    toggleSimulation: () => set((state) => {
+      const next = !state.simulationActive;
+      dbService.logActivity('admin', 'SYSTEM', `Data Simulation ${next ? 'Enabled' : 'Disabled'}`);
+      return {
+        simulationActive: next,
+        logs: dbService.getActivityLogs()
+      };
+    }),
 
     runSimulationTick: () => set((state) => {
-      if (!state.simulationActive) return {};
+      if (!state.simulationActive || state.hardwareConfig.mode === 'hardware') return {};
 
-      // Randomize temp slightly (-0.5 to +0.5) unless alarming
+      // Slight temperature randomization
       let newTemp = state.temperature;
       if (!state.isAlarming) {
         newTemp = Number((newTemp + (Math.random() - 0.5)).toFixed(1));
       }
 
-      // Randomize latency (8 to 40)
-      const newLatency = Math.floor(Math.random() * 32) + 8;
-      
-      // Update temperature history (sliding window of 12)
+      const newLatency = Math.floor(Math.random() * 25) + 8;
       const newHistory = [...state.temperatureHistory, newTemp].slice(-12);
 
       return checkSafetyRules({
@@ -138,15 +224,65 @@ export const useStore = create<SmartHomeState>((set, get) => {
       });
     }),
 
-    pollDevices: () => set((state) => {
-      // Simulate polling network and refreshing values slightly
+    pollDevices: async () => {
+      const state = get();
+      if (state.hardwareConfig.mode === 'hardware') {
+        const telemetry = await fetchESP32Status(state.hardwareConfig.esp32Ip);
+        if (telemetry) {
+          dbService.logActivity('ESP32 Hub', 'SYSTEM', `Live telemetry synced (${telemetry.temperature}°C, ${telemetry.humidity}%)`);
+          set(checkSafetyRules({
+            temperature: telemetry.temperature,
+            humidity: telemetry.humidity,
+            isLocked: telemetry.isLocked,
+            smokeActive: telemetry.smokeActive,
+            isAlarming: telemetry.isAlarming,
+            signalStrength: telemetry.signalStrength,
+            latencyMs: 15
+          }));
+          return;
+        } else {
+          dbService.logActivity('ESP32 Hub', 'SYSTEM', 'Failed to poll ESP32 - Hardware unreachable', 'FAILED');
+        }
+      }
+
+      // Simulation fallback poll
       const newLatency = Math.floor(Math.random() * 20) + 5;
       const newSignal = Math.min(100, Math.floor(state.signalStrength + (Math.random() * 4 - 2)));
-      return {
+      dbService.logActivity('Diagnostics', 'SYSTEM', 'Device connection ping test completed');
+      set({
         latencyMs: newLatency,
         signalStrength: newSignal,
-        logs: addLogBase('Manual device poll completed', state.logs)
-      };
-    })
+        logs: dbService.getActivityLogs()
+      });
+    },
+
+    updateHardwareConfig: (config) => {
+      const current = get().hardwareConfig;
+      const updated = { ...current, ...config };
+      set({ hardwareConfig: updated });
+      dbService.logActivity('admin', 'SYSTEM', `Hardware Mode changed to: ${updated.mode.toUpperCase()}`);
+    },
+
+    seedDemoLogs: () => {
+      dbService.seedTestActivityLogs();
+      set({ logs: dbService.getActivityLogs() });
+    },
+
+    clearDatabaseLogs: () => {
+      dbService.resetDatabase();
+      set({
+        devices: dbService.getDevices(),
+        logs: dbService.getActivityLogs(),
+        alerts: dbService.getAlerts()
+      });
+    },
+
+    refreshFromDatabase: () => {
+      set({
+        devices: dbService.getDevices(),
+        logs: dbService.getActivityLogs(),
+        alerts: dbService.getAlerts()
+      });
+    }
   };
 });
