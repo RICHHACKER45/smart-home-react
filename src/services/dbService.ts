@@ -1,6 +1,6 @@
 /**
- * Local Persistent Database Service
- * Implements CRUD and audit logging for Accounts, Devices, SensorReadings, and ActivityLogs.
+ * Persistent Database Service with Cloud Supabase Sync
+ * Implements Authentication, CRUD, audit logging, and realtime cloud sync.
  */
 
 import { 
@@ -13,6 +13,7 @@ import {
   EventCategory,
   LogStatusResult
 } from '../types/database';
+import { supabaseApi } from './supabaseClient';
 
 const STORAGE_PREFIX = 'smart_home_db_';
 
@@ -20,8 +21,8 @@ const DEFAULT_ADMIN: Account = {
   id: 'acc-admin-01',
   username: 'admin',
   email: 'admin@smarthome.local',
-  passwordHash: 'hashed_password_123',
-  doorPasskeyHash: '1234', // Default PIN for testing
+  passwordHash: 'password123', // Standard initial password for testing
+  doorPasskeyHash: '1234',      // Default 4-digit PIN for door lock/unlock
   role: 'admin',
   status: 'active',
   createdAt: new Date().toISOString()
@@ -114,9 +115,32 @@ class DatabaseService {
     }
   }
 
-  // --- ACCOUNTS & PASSKEY ---
+  // --- ACCOUNTS & AUTHENTICATION ---
   getAccount(): Account {
     return this.getItem<Account>('account', DEFAULT_ADMIN);
+  }
+
+  getCurrentSession(): Account | null {
+    return this.getItem<Account | null>('current_session', null);
+  }
+
+  authenticate(username: string, password: string): { success: boolean; account?: Account; message?: string } {
+    const acc = this.getAccount();
+    if (acc.username.toLowerCase() === username.trim().toLowerCase() && acc.passwordHash === password) {
+      this.setItem('current_session', acc);
+      this.logActivity(acc.username, 'AUTH', `User "${acc.username}" successfully logged in`, 'SUCCESS');
+      return { success: true, account: acc };
+    }
+    this.logActivity(username || 'Unknown', 'AUTH', `Failed login attempt for username "${username}"`, 'FAILED');
+    return { success: false, message: 'Invalid username or password. Please try again.' };
+  }
+
+  logout(): void {
+    const session = this.getCurrentSession();
+    if (session) {
+      this.logActivity(session.username, 'AUTH', `User "${session.username}" logged out`, 'SUCCESS');
+    }
+    localStorage.removeItem(STORAGE_PREFIX + 'current_session');
   }
 
   verifyPasskey(pin: string): boolean {
@@ -128,7 +152,17 @@ class DatabaseService {
     const acc = this.getAccount();
     acc.doorPasskeyHash = newPin;
     this.setItem('account', acc);
-    this.logActivity('admin', 'AUTH', `Door passkey updated to ${newPin}`, 'SUCCESS');
+    this.logActivity(acc.username, 'AUTH', `Door passkey updated to ${newPin}`, 'SUCCESS');
+
+    // Sync to Supabase Accounts Table
+    supabaseApi.updateDoorPasskey(acc.id, newPin).catch(() => {});
+  }
+
+  updatePassword(newPassword: string): void {
+    const acc = this.getAccount();
+    acc.passwordHash = newPassword;
+    this.setItem('account', acc);
+    this.logActivity(acc.username, 'AUTH', 'Account password successfully updated', 'SUCCESS');
   }
 
   // --- DEVICES ---
@@ -163,8 +197,12 @@ class DatabaseService {
       statusResult,
       createdAt: new Date().toLocaleTimeString()
     };
-    const updated = [newLog, ...logs].slice(0, 100); // Keep latest 100 logs
+    const updated = [newLog, ...logs].slice(0, 100);
     this.setItem('logs', updated);
+
+    // Asynchronously sync with Supabase Cloud DB
+    supabaseApi.insertActivityLog(actorName, eventCategory, actionDescription, statusResult, deviceId).catch(() => {});
+
     return newLog;
   }
 
@@ -186,6 +224,10 @@ class DatabaseService {
     };
     this.setItem('alerts', [newAlert, ...alerts]);
     this.logActivity('Emergency Failsafe', 'EMERGENCY', `🚨 ${type}: ${peakValue} (Failsafe Auto-Unlock Activated)`, 'TRIGGERED');
+
+    // Sync Alert to Supabase Cloud DB
+    supabaseApi.createEmergencyAlert('dev-smoke-01', type, peakValue).catch(() => {});
+
     return newAlert;
   }
 
@@ -220,6 +262,7 @@ class DatabaseService {
     localStorage.removeItem(STORAGE_PREFIX + 'devices');
     localStorage.removeItem(STORAGE_PREFIX + 'logs');
     localStorage.removeItem(STORAGE_PREFIX + 'alerts');
+    localStorage.removeItem(STORAGE_PREFIX + 'current_session');
     this.setItem('account', DEFAULT_ADMIN);
     this.setItem('devices', DEFAULT_DEVICES);
     this.setItem('logs', INITIAL_LOGS);

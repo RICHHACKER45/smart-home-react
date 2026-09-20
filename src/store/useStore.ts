@@ -7,9 +7,11 @@ import {
   resetESP32Alarm,
   HardwareConfig 
 } from '../services/hardwareService';
-import { Device, ActivityLog, EmergencyAlert } from '../types/database';
+import { Account, Device, ActivityLog, EmergencyAlert } from '../types/database';
 
 export interface SmartHomeState {
+  isAuthenticated: boolean;
+  currentUser: Account | null;
   isLocked: boolean;
   temperature: number;
   humidity: number;
@@ -25,6 +27,10 @@ export interface SmartHomeState {
   simulationActive: boolean;
   hardwareConfig: HardwareConfig;
   isPasskeyModalOpen: boolean;
+
+  // Authentication Actions
+  login: (username: string, password: string) => { success: boolean; message?: string };
+  logout: () => void;
 
   // Primary Actions
   openPasskeyModal: () => void;
@@ -81,7 +87,11 @@ export const useStore = create<SmartHomeState>((set, get) => {
     };
   };
 
+  const initialSession = dbService.getCurrentSession();
+
   return {
+    isAuthenticated: initialSession !== null,
+    currentUser: initialSession,
     isLocked: true,
     temperature: 24.8,
     humidity: 47,
@@ -97,6 +107,29 @@ export const useStore = create<SmartHomeState>((set, get) => {
     simulationActive: true,
     hardwareConfig: getHardwareConfig(),
     isPasskeyModalOpen: false,
+
+    // Authentication
+    login: (username, password) => {
+      const res = dbService.authenticate(username, password);
+      if (res.success && res.account) {
+        set({
+          isAuthenticated: true,
+          currentUser: res.account,
+          logs: dbService.getActivityLogs()
+        });
+        return { success: true };
+      }
+      return { success: false, message: res.message || 'Invalid credentials' };
+    },
+
+    logout: () => {
+      dbService.logout();
+      set({
+        isAuthenticated: false,
+        currentUser: null,
+        logs: dbService.getActivityLogs()
+      });
+    },
 
     openPasskeyModal: () => set({ isPasskeyModalOpen: true }),
     closePasskeyModal: () => set({ isPasskeyModalOpen: false }),
@@ -115,8 +148,9 @@ export const useStore = create<SmartHomeState>((set, get) => {
         }
       }
 
+      const actor = state.currentUser ? state.currentUser.username : 'admin';
       dbService.logActivity(
-        'admin', 
+        actor, 
         'DOOR', 
         `Door ${newLocked ? 'Locked' : 'Unlocked'} via Passkey Verification`, 
         'SUCCESS'

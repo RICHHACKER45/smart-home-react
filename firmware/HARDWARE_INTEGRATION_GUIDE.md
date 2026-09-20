@@ -6,13 +6,13 @@ This guide provides the exact wiring, pinouts, and setup instructions so that on
 
 ## 🔌 1. Required Hardware Components & Pinout
 
-| Component | ESP32 GPIO Pin | Function | Description |
-| :--- | :--- | :--- | :--- |
-| **DHT11 / DHT22** | `GPIO 4` | Temperature & Humidity Sensor | Measures climate data every 3 seconds |
-| **MQ-2 / MQ-135** | `GPIO 34` (Analog A0) | Smoke & Gas Detector | Detects flammable gases, smoke levels |
-| **Servo Motor (SG90 / MG996R)** | `GPIO 18` (PWM) | Smart Door Lock Actuator | 0° = Locked, 90° = Unlocked |
-| **Active Buzzer (5V)** | `GPIO 19` | Emergency Siren | Sounds alarm during smoke / extreme heat ($\ge 45^\circ\text{C}$) |
-| **Status LED** | `GPIO 2` (Onboard LED) | Device & Lock Indicator | Visual status feedback |
+| Component                             | ESP32 GPIO Pin           | Function                      | Description                                                         |
+| :------------------------------------ | :----------------------- | :---------------------------- | :------------------------------------------------------------------ |
+| **DHT11 / DHT22**               | `GPIO 4`               | Temperature & Humidity Sensor | Measures climate data every 3 seconds                               |
+| **MQ-2 / MQ-135**               | `GPIO 34` (Analog A0)  | Smoke & Gas Detector          | Detects flammable gases, smoke levels                               |
+| **Servo Motor (SG90 / MG996R)** | `GPIO 18` (PWM)        | Smart Door Lock Actuator      | 0° = Locked, 90° = Unlocked                                       |
+| **Active Buzzer (5V)**          | `GPIO 19`              | Emergency Siren               | Sounds alarm during smoke / extreme heat ($\ge 45^\circ\text{C}$) |
+| **Status LED**                  | `GPIO 2` (Onboard LED) | Device & Lock Indicator       | Visual status feedback                                              |
 
 ---
 

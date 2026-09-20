@@ -64,7 +64,7 @@ ion-tab-button {
   justify-content: center;
   align-items: center;
   z-index: 9999;
-  animation: fadeOut 0.5s ease-in-out 2s forwards;
+  animation: fadeOut 0.4s ease-in-out 1.2s forwards;
 }
 
 .splash-content {
@@ -89,8 +89,8 @@ ion-tab-button {
 }
 
 @keyframes fadeOut {
-  0%, 99% { opacity: 1; pointer-events: auto; }
-  100% { opacity: 0; pointer-events: none; visibility: hidden; }
+  0%, 90% { opacity: 1; pointer-events: auto; }
+  100% { opacity: 0; pointer-events: none; visibility: hidden; display: none; }
 }
 
 @keyframes float {

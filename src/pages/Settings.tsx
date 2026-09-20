@@ -25,13 +25,18 @@ import {
   sparklesOutline,
   cloudDownloadOutline,
   keyOutline,
-  serverOutline
+  serverOutline,
+  personCircleOutline,
+  logOutOutline,
+  lockClosedOutline
 } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
 import { dbService } from '../services/dbService';
 
 const Settings: React.FC = () => {
   const { 
+    currentUser,
+    logout,
     increaseTemp, 
     setExactTemperature,
     setExactHumidity,
@@ -55,6 +60,64 @@ const Settings: React.FC = () => {
   const [espIpInput, setEspIpInput] = useState<string>(hardwareConfig.esp32Ip);
   const [presentAlert] = useIonAlert();
   const [presentToast] = useIonToast();
+
+  const handleLogoutPrompt = () => {
+    presentAlert({
+      header: 'Confirm Sign Out',
+      message: 'Are you sure you want to log out of your account?',
+      buttons: [
+        'Cancel',
+        {
+          text: 'Sign Out',
+          role: 'destructive',
+          handler: () => {
+            logout();
+            presentToast({
+              message: 'Signed out successfully.',
+              duration: 2000,
+              color: 'medium'
+            });
+          }
+        }
+      ]
+    });
+  };
+
+  const handleChangePasswordPrompt = () => {
+    presentAlert({
+      header: 'Change Account Password',
+      message: 'Enter your new login password.',
+      inputs: [
+        {
+          name: 'newPassword',
+          type: 'password',
+          placeholder: 'New Password (min 6 characters)'
+        }
+      ],
+      buttons: [
+        'Cancel',
+        {
+          text: 'Update Password',
+          handler: (data) => {
+            if (data.newPassword && data.newPassword.length >= 6) {
+              dbService.updatePassword(data.newPassword);
+              presentToast({
+                message: 'Password updated successfully!',
+                duration: 2500,
+                color: 'success'
+              });
+            } else {
+              presentToast({
+                message: 'Password must be at least 6 characters.',
+                duration: 2500,
+                color: 'danger'
+              });
+            }
+          }
+        }
+      ]
+    });
+  };
 
   const handleSaveHardwareIp = () => {
     updateHardwareConfig({ esp32Ip: espIpInput });
@@ -122,9 +185,6 @@ const Settings: React.FC = () => {
 
   const handleExportJson = () => {
     const jsonStr = dbService.exportDatabaseJson();
-    console.log('[DATABASE EXPORT]', jsonStr);
-    
-    // Copy to clipboard or prompt alert with stats
     navigator.clipboard?.writeText(jsonStr);
     presentAlert({
       header: 'Database Snapshot Exported',
@@ -160,7 +220,7 @@ const Settings: React.FC = () => {
     <IonPage>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>System & QA Settings</IonTitle>
+          <IonTitle>System & Account Settings</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent fullscreen>
@@ -172,7 +232,58 @@ const Settings: React.FC = () => {
         
         <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
-          {/* 1. Hardware Gateway Mode */}
+          {/* 1. Logged-in Account Profile */}
+          <div className="card" style={{ border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <div style={{ 
+                  width: '46px', 
+                  height: '46px', 
+                  borderRadius: '50%', 
+                  background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(14, 165, 233, 0.05))',
+                  border: '1px solid rgba(56, 189, 248, 0.4)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}>
+                  <IonIcon icon={personCircleOutline} style={{ fontSize: '30px', color: '#38bdf8' }} />
+                </div>
+                <div>
+                  <strong style={{ fontSize: '16px', color: '#fff', display: 'block' }}>
+                    {currentUser?.username || 'admin'}
+                  </strong>
+                  <small style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+                    {currentUser?.email || 'admin@smarthome.local'}
+                  </small>
+                </div>
+              </div>
+
+              <span style={{ 
+                fontSize: '11px', 
+                background: 'rgba(56, 189, 248, 0.15)', 
+                color: '#38bdf8', 
+                padding: '4px 8px', 
+                borderRadius: '8px',
+                fontWeight: 'bold',
+                textTransform: 'uppercase'
+              }}>
+                {currentUser?.role || 'ADMIN'}
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <IonButton expand="block" size="small" color="light" fill="outline" onClick={handleChangePasswordPrompt} style={{ flex: 1 }}>
+                <IonIcon icon={lockClosedOutline} slot="start" />
+                Change Password
+              </IonButton>
+              <IonButton expand="block" size="small" color="danger" fill="outline" onClick={handleLogoutPrompt} style={{ flex: 1 }}>
+                <IonIcon icon={logOutOutline} slot="start" />
+                Log Out
+              </IonButton>
+            </div>
+          </div>
+
+          {/* 2. Hardware Gateway Mode */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <IonIcon icon={serverOutline} style={{ fontSize: '20px', color: '#38bdf8' }} />
@@ -191,6 +302,28 @@ const Settings: React.FC = () => {
                 <IonLabel>Live ESP32 Board</IonLabel>
               </IonSegmentButton>
             </IonSegment>
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+              <IonButton 
+                expand="block" 
+                size="small" 
+                color="secondary" 
+                fill="outline"
+                style={{ flex: 1 }}
+                onClick={async () => {
+                  const { supabaseApi } = await import('../services/supabaseClient');
+                  const res = await supabaseApi.testConnection();
+                  presentToast({
+                    message: res.success ? '🟢 Supabase Cloud: Online & Connected' : `🔴 Supabase Cloud: ${res.message}`,
+                    duration: 3000,
+                    color: res.success ? 'success' : 'danger'
+                  });
+                }}
+              >
+                <IonIcon icon={cloudDownloadOutline} slot="start" />
+                Test Supabase Cloud
+              </IonButton>
+            </div>
 
             {hardwareConfig.mode === 'hardware' && (
               <div style={{ background: 'rgba(56, 189, 248, 0.08)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
@@ -217,7 +350,7 @@ const Settings: React.FC = () => {
             )}
           </div>
 
-          {/* 2. Registered Devices Registry */}
+          {/* 3. Registered Devices Registry */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <IonIcon icon={hardwareChipOutline} style={{ fontSize: '20px', color: '#10b981' }} />
@@ -256,16 +389,16 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* 3. Security & Passkey Management */}
+          {/* 4. Security & Door Passkey Management */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <IonIcon icon={shieldCheckmarkOutline} style={{ fontSize: '20px', color: '#a855f7' }} />
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Security & Passkey</h2>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>Door Security Passkey</h2>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <div>
-                <span style={{ color: 'var(--text)', fontSize: '14px', display: 'block' }}>Current Door Passkey</span>
-                <small style={{ color: 'var(--text-muted)' }}>Required before door unlock action</small>
+                <span style={{ color: 'var(--text)', fontSize: '14px', display: 'block' }}>Current Door PIN</span>
+                <small style={{ color: 'var(--text-muted)' }}>Required before unlocking door</small>
               </div>
               <strong style={{ color: '#38bdf8', fontSize: '16px', letterSpacing: '2px' }}>
                 {dbService.getAccount().doorPasskeyHash}
@@ -282,7 +415,7 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* 4. Complete Software Testing & QA Suite */}
+          {/* 5. Complete Software Testing & QA Suite */}
           <div className="card" style={{ border: '1px solid rgba(245, 158, 11, 0.4)' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
               <IonIcon icon={bugOutline} style={{ fontSize: '22px', color: '#f59e0b' }} />
@@ -366,7 +499,7 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* 5. System Diagnostics */}
+          {/* 6. System Diagnostics */}
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <h3 style={{ margin: 0, fontSize: '15px' }}>Diagnostics & Health</h3>
