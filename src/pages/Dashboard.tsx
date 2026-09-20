@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton, IonIcon } from '@ionic/react';
-import { lockClosed, lockOpen, keyOutline, warningOutline } from 'ionicons/icons';
+import { lockClosed, lockOpen, keyOutline, warningOutline, timeOutline, checkmarkCircleOutline } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
 import { PasskeyModal } from '../components/PasskeyModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
@@ -48,21 +48,61 @@ const playDoorSound = (isUnlocking: boolean) => {
 const Dashboard: React.FC = () => {
   const { 
     isLocked, 
+    isDoorAuthorized,
+    doorAuthExpiresAt,
     temperature, 
     humidity, 
     isAlarming, 
     isPasskeyModalOpen,
     openPasskeyModal,
     closePasskeyModal,
-    executeAuthenticatedDoorToggle 
+    executeAuthenticatedDoorToggle,
+    toggleLock,
+    revokeDoorAuthorization
   } = useStore();
 
-  const handleDoorPrompt = async () => {
+  const [remainingMinutes, setRemainingMinutes] = useState<number>(0);
+
+  useEffect(() => {
+    const calculateRemaining = () => {
+      if (isDoorAuthorized && doorAuthExpiresAt) {
+        const diffMs = doorAuthExpiresAt - Date.now();
+        if (diffMs > 0) {
+          setRemainingMinutes(Math.ceil(diffMs / (60 * 1000)));
+        } else {
+          setRemainingMinutes(0);
+          revokeDoorAuthorization();
+        }
+      } else {
+        setRemainingMinutes(0);
+      }
+    };
+
+    calculateRemaining();
+    const interval = setInterval(calculateRemaining, 5000);
+    return () => clearInterval(interval);
+  }, [isDoorAuthorized, doorAuthExpiresAt, revokeDoorAuthorization]);
+
+  const isSessionActive = isDoorAuthorized && remainingMinutes > 0;
+
+  const handleDoorToggleAction = async () => {
     if (isAlarming) return;
     try {
       await Haptics.impact({ style: ImpactStyle.Light });
     } catch {}
-    openPasskeyModal();
+
+    if (!isLocked) {
+      // Direct lock
+      playDoorSound(false);
+      await toggleLock();
+    } else if (isSessionActive) {
+      // Direct unlock via active session
+      playDoorSound(true);
+      await toggleLock();
+    } else {
+      // Require Passkey
+      openPasskeyModal();
+    }
   };
 
   const handlePasskeySuccess = async () => {
@@ -104,22 +144,39 @@ const Dashboard: React.FC = () => {
           <div className="card">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0 }}>Front Door Security</h2>
-              <span style={{ 
-                fontSize: '11px', 
-                background: 'rgba(56, 189, 248, 0.15)', 
-                color: '#38bdf8', 
-                padding: '4px 8px', 
-                borderRadius: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px'
-              }}>
-                <IonIcon icon={keyOutline} /> Passkey Protected
-              </span>
+              
+              {isSessionActive ? (
+                <span style={{ 
+                  fontSize: '11px', 
+                  background: 'rgba(16, 185, 129, 0.15)', 
+                  color: '#10b981', 
+                  padding: '4px 10px', 
+                  borderRadius: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px',
+                  fontWeight: '600'
+                }}>
+                  <IonIcon icon={checkmarkCircleOutline} /> Authorized ({remainingMinutes}m left)
+                </span>
+              ) : (
+                <span style={{ 
+                  fontSize: '11px', 
+                  background: 'rgba(56, 189, 248, 0.15)', 
+                  color: '#38bdf8', 
+                  padding: '4px 8px', 
+                  borderRadius: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  <IonIcon icon={keyOutline} /> Passkey Protected
+                </span>
+              )}
             </div>
 
             <div className="door-container">
-              <div className="door-frame" onClick={handleDoorPrompt} style={{ cursor: 'pointer' }}>
+              <div className="door-frame" onClick={handleDoorToggleAction} style={{ cursor: 'pointer' }}>
                 <div className={`door-panel ${!isLocked ? 'unlocked' : ''}`}>
                   <div className="door-knob"></div>
                 </div>
@@ -140,16 +197,41 @@ const Dashboard: React.FC = () => {
               </span>
             </div>
 
-            <IonButton 
-              expand="block" 
-              color={isLocked ? "primary" : "warning"}
-              onClick={handleDoorPrompt}
-              disabled={isAlarming}
-              style={{ '--border-radius': '12px', marginTop: '18px' }}
-            >
-              <IonIcon icon={isLocked ? lockOpen : lockClosed} slot="start" />
-              {isLocked ? 'Unlock with Passkey' : 'Lock with Passkey'}
-            </IonButton>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '18px' }}>
+              <IonButton 
+                expand="block" 
+                color={isLocked ? "primary" : "warning"}
+                onClick={handleDoorToggleAction}
+                disabled={isAlarming}
+                style={{ '--border-radius': '12px', margin: 0 }}
+              >
+                <IonIcon icon={isLocked ? lockOpen : lockClosed} slot="start" />
+                {isLocked 
+                  ? (isSessionActive ? 'Unlock Door' : 'Unlock with Passkey')
+                  : 'Lock Door'
+                }
+              </IonButton>
+
+              {isSessionActive && (
+                <IonButton
+                  expand="block"
+                  fill="clear"
+                  size="small"
+                  color="medium"
+                  onClick={() => {
+                    revokeDoorAuthorization();
+                    if (!isLocked) {
+                      playDoorSound(false);
+                      toggleLock();
+                    }
+                  }}
+                  style={{ margin: 0, fontSize: '12px' }}
+                >
+                  <IonIcon icon={timeOutline} slot="start" />
+                  Lock & Expire Authorization Session
+                </IonButton>
+              )}
+            </div>
           </div>
 
           {/* Climate Telemetry Cards */}
@@ -174,7 +256,7 @@ const Dashboard: React.FC = () => {
           isOpen={isPasskeyModalOpen}
           onClose={closePasskeyModal}
           onSuccess={handlePasskeySuccess}
-          targetActionName={isLocked ? 'Door Unlock' : 'Door Lock'}
+          targetActionName="Door Unlock"
         />
       </IonContent>
     </IonPage>

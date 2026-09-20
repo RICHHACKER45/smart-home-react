@@ -12,6 +12,7 @@ import {
   IonSegment,
   IonSegmentButton,
   IonIcon,
+  IonToggle,
   useIonAlert,
   useIonToast
 } from '@ionic/react';
@@ -28,7 +29,12 @@ import {
   serverOutline,
   personCircleOutline,
   logOutOutline,
-  lockClosedOutline
+  lockClosedOutline,
+  eyeOutline,
+  eyeOffOutline,
+  timerOutline,
+  codeSlashOutline,
+  warningOutline
 } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
 import { dbService } from '../services/dbService';
@@ -37,6 +43,10 @@ const Settings: React.FC = () => {
   const { 
     currentUser,
     logout,
+    doorSessionDurationMinutes,
+    setDoorSessionDurationMinutes,
+    isDeveloperMode,
+    toggleDeveloperMode,
     increaseTemp, 
     setExactTemperature,
     setExactHumidity,
@@ -58,6 +68,8 @@ const Settings: React.FC = () => {
   } = useStore();
 
   const [espIpInput, setEspIpInput] = useState<string>(hardwareConfig.esp32Ip);
+  const [showPinMask, setShowPinMask] = useState<boolean>(false);
+  const [revealedPlainPin, setRevealedPlainPin] = useState<string | null>(null);
   const [presentAlert] = useIonAlert();
   const [presentToast] = useIonToast();
 
@@ -156,8 +168,9 @@ const Settings: React.FC = () => {
           handler: async (data) => {
             if (data.newPin && data.newPin.length === 4) {
               await dbService.updatePasskey(data.newPin);
+              setRevealedPlainPin(data.newPin);
               presentToast({
-                message: `Passkey updated to: ${data.newPin} (hashed)`,
+                message: `Passkey updated to: ${data.newPin} (hashed securely)`,
                 duration: 2500,
                 color: 'success'
               });
@@ -174,8 +187,91 @@ const Settings: React.FC = () => {
     });
   };
 
+  const handleTogglePinVisibility = () => {
+    if (!showPinMask) {
+      // If we don't have the plain PIN in state, prompt for verification
+      if (!revealedPlainPin) {
+        presentAlert({
+          header: 'Verify Current Passkey',
+          message: 'Enter your 4-digit PIN to reveal it.',
+          inputs: [
+            {
+              name: 'verifyPin',
+              type: 'password',
+              placeholder: 'Enter 4-digit PIN',
+              attributes: { maxlength: 4, inputmode: 'numeric' }
+            }
+          ],
+          buttons: [
+            'Cancel',
+            {
+              text: 'Verify',
+              handler: async (data) => {
+                if (data.verifyPin) {
+                  const isValid = await dbService.verifyPasskey(data.verifyPin);
+                  if (isValid) {
+                    setRevealedPlainPin(data.verifyPin);
+                    setShowPinMask(true);
+                  } else {
+                    presentToast({
+                      message: 'Incorrect PIN entered.',
+                      duration: 2000,
+                      color: 'danger'
+                    });
+                  }
+                }
+              }
+            }
+          ]
+        });
+      } else {
+        setShowPinMask(true);
+      }
+    } else {
+      setShowPinMask(false);
+    }
+  };
+
+  const handleToggleDeveloperMode = (e: CustomEvent) => {
+    const shouldEnable = e.detail.checked;
+    if (shouldEnable) {
+      presentAlert({
+        header: '⚠️ Enable Developer Mode?',
+        message: 'You are entering Developer & QA Mode. This exposes low-level IoT hardware gateways, database manipulation tools, and telemetry simulators. Are you sure you want to proceed?',
+        buttons: [
+          {
+            text: 'Cancel',
+            role: 'cancel',
+            handler: () => {
+              toggleDeveloperMode(false);
+            }
+          },
+          {
+            text: 'Enable Dev Mode',
+            handler: () => {
+              toggleDeveloperMode(true);
+              presentToast({
+                message: 'Developer Mode Enabled',
+                duration: 2000,
+                color: 'warning'
+              });
+            }
+          }
+        ]
+      });
+    } else {
+      toggleDeveloperMode(false);
+      presentToast({
+        message: 'Developer Mode Disabled',
+        duration: 1500,
+        color: 'medium'
+      });
+    }
+  };
+
   const handleSimulateFailedAuth = () => {
-    dbService.logActivity('Intruder / Wrong PIN', 'AUTH', 'Failed door unlock attempt - Invalid PIN entered (QA Test)', 'FAILED');
+    const actor = currentUser ? currentUser.username : 'Intruder';
+    dbService.logActivity(actor, 'AUTH', 'Failed door unlock attempt - Invalid PIN entered (QA Test)', 'FAILED');
     presentToast({
       message: 'Simulated Security Alert: Failed passkey logged to Activity tab',
       duration: 2500,
@@ -220,7 +316,7 @@ const Settings: React.FC = () => {
     <IonPage>
       <IonHeader>
         <IonToolbar>
-          <IonTitle>System & Account Settings</IonTitle>
+          <IonTitle>Settings</IonTitle>
         </IonToolbar>
       </IonHeader>
       <IonContent fullscreen>
@@ -250,24 +346,23 @@ const Settings: React.FC = () => {
                 </div>
                 <div>
                   <strong style={{ fontSize: '16px', color: '#fff', display: 'block' }}>
-                    {currentUser?.username || 'admin'}
+                    {currentUser?.username || 'User'}
                   </strong>
                   <small style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
-                    {currentUser?.email || 'admin@smarthome.local'}
+                    {currentUser?.email || 'user@smarthome.local'}
                   </small>
                 </div>
               </div>
 
               <span style={{ 
                 fontSize: '11px', 
-                background: 'rgba(56, 189, 248, 0.15)', 
-                color: '#38bdf8', 
+                background: 'rgba(16, 185, 129, 0.15)', 
+                color: '#10b981', 
                 padding: '4px 8px', 
                 borderRadius: '8px',
-                fontWeight: 'bold',
-                textTransform: 'uppercase'
+                fontWeight: 'bold'
               }}>
-                {currentUser?.role || 'ADMIN'}
+                Active Account
               </span>
             </div>
 
@@ -278,83 +373,98 @@ const Settings: React.FC = () => {
               </IonButton>
               <IonButton expand="block" size="small" color="danger" fill="outline" onClick={handleLogoutPrompt} style={{ flex: 1 }}>
                 <IonIcon icon={logOutOutline} slot="start" />
-                Log Out
+                Sign Out
               </IonButton>
             </div>
           </div>
 
-          {/* 2. Hardware Gateway Mode */}
+          {/* 2. Security & Door Passkey Management */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <IonIcon icon={serverOutline} style={{ fontSize: '20px', color: '#38bdf8' }} />
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Device Connection Gateway</h2>
+              <IonIcon icon={shieldCheckmarkOutline} style={{ fontSize: '20px', color: '#a855f7' }} />
+              <h2 style={{ margin: 0, fontSize: '18px' }}>Door Security Passkey</h2>
             </div>
             
-            <IonSegment 
-              value={hardwareConfig.mode} 
-              onIonChange={(e) => handleModeChange(e.detail.value as any)}
-              style={{ background: 'var(--surface-alt)', borderRadius: '10px', marginBottom: '14px' }}
-            >
-              <IonSegmentButton value="simulation">
-                <IonLabel>Demo Simulation</IonLabel>
-              </IonSegmentButton>
-              <IonSegmentButton value="hardware">
-                <IonLabel>Live ESP32 Board</IonLabel>
-              </IonSegmentButton>
-            </IonSegment>
-
-            <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
-              <IonButton 
-                expand="block" 
-                size="small" 
-                color="secondary" 
-                fill="outline"
-                style={{ flex: 1 }}
-                onClick={async () => {
-                  const { supabaseApi } = await import('../services/supabaseClient');
-                  const res = await supabaseApi.testConnection();
-                  presentToast({
-                    message: res.success ? '🟢 Supabase Cloud: Online & Connected' : `🔴 Supabase Cloud: ${res.message}`,
-                    duration: 3000,
-                    color: res.success ? 'success' : 'danger'
-                  });
-                }}
-              >
-                <IonIcon icon={cloudDownloadOutline} slot="start" />
-                Test Supabase Cloud
-              </IonButton>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              background: 'var(--surface-alt)', 
+              padding: '12px 14px', 
+              borderRadius: '10px', 
+              marginBottom: '14px' 
+            }}>
+              <div>
+                <span style={{ color: 'var(--text)', fontSize: '14px', display: 'block', fontWeight: '500' }}>Door Security PIN</span>
+                <small style={{ color: 'var(--text-muted)' }}>4-digit code required to unlock the door</small>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <strong style={{ 
+                  color: '#38bdf8', 
+                  fontSize: '18px', 
+                  letterSpacing: '3px',
+                  fontFamily: 'monospace'
+                }}>
+                  {showPinMask ? (revealedPlainPin || '1234') : '••••'}
+                </strong>
+                <button 
+                  onClick={handleTogglePinVisibility}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-muted)',
+                    cursor: 'pointer',
+                    padding: '4px',
+                    display: 'flex',
+                    alignItems: 'center'
+                  }}
+                  aria-label={showPinMask ? 'Hide PIN' : 'Reveal PIN'}
+                >
+                  <IonIcon icon={showPinMask ? eyeOffOutline : eyeOutline} style={{ fontSize: '18px' }} />
+                </button>
+              </div>
             </div>
 
-            {hardwareConfig.mode === 'hardware' && (
-              <div style={{ background: 'rgba(56, 189, 248, 0.08)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
-                <IonItem lines="none" style={{ '--background': 'transparent', margin: 0 }}>
-                  <IonLabel position="stacked" style={{ color: '#38bdf8', fontSize: '12px' }}>
-                    ESP32 Local IP Address
-                  </IonLabel>
-                  <IonInput 
-                    value={espIpInput} 
-                    placeholder="e.g. 192.168.1.50"
-                    onIonInput={(e) => setEspIpInput(e.detail.value!)}
-                    style={{ color: '#fff', fontSize: '16px' }}
-                  />
-                </IonItem>
-                <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-                  <IonButton expand="block" size="small" color="primary" onClick={handleSaveHardwareIp} style={{ flex: 1 }}>
-                    Save IP
-                  </IonButton>
-                  <IonButton expand="block" size="small" color="light" onClick={pollDevices} style={{ flex: 1 }}>
-                    Ping Test
-                  </IonButton>
-                </div>
-              </div>
-            )}
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <IonButton expand="block" color="light" size="small" onClick={handleChangePasskeyPrompt} style={{ flex: 1 }}>
+                <IonIcon icon={keyOutline} slot="start" />
+                Change 4-Digit PIN
+              </IonButton>
+            </div>
           </div>
 
-          {/* 3. Registered Devices Registry */}
+          {/* 3. Door Authorization Duration Settings */}
+          <div className="card">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+              <IonIcon icon={timerOutline} style={{ fontSize: '20px', color: '#38bdf8' }} />
+              <h2 style={{ margin: 0, fontSize: '18px' }}>Passkey Session Timeout</h2>
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: '12px', margin: '0 0 12px 0' }}>
+              How long the door remains authorized after entering your 4-digit PIN before requiring it again.
+            </p>
+
+            <IonSegment 
+              value={doorSessionDurationMinutes.toString()} 
+              onIonChange={(e) => setDoorSessionDurationMinutes(parseInt(e.detail.value as string, 10))}
+              style={{ background: 'var(--surface-alt)', borderRadius: '10px' }}
+            >
+              <IonSegmentButton value="15">
+                <IonLabel>15 Mins</IonLabel>
+              </IonSegmentButton>
+              <IonSegmentButton value="30">
+                <IonLabel>30 Mins</IonLabel>
+              </IonSegmentButton>
+              <IonSegmentButton value="60">
+                <IonLabel>1 Hour</IonLabel>
+              </IonSegmentButton>
+            </IonSegment>
+          </div>
+
+          {/* 4. Registered Devices Registry */}
           <div className="card">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
               <IonIcon icon={hardwareChipOutline} style={{ fontSize: '20px', color: '#10b981' }} />
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Hardware Device Registry</h2>
+              <h2 style={{ margin: 0, fontSize: '18px' }}>Registered Devices</h2>
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {devices.map((d) => (
@@ -389,133 +499,220 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* 4. Security & Door Passkey Management */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <IonIcon icon={shieldCheckmarkOutline} style={{ fontSize: '20px', color: '#a855f7' }} />
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Door Security Passkey</h2>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <div>
-                <span style={{ color: 'var(--text)', fontSize: '14px', display: 'block' }}>Current Door PIN</span>
-                <small style={{ color: 'var(--text-muted)' }}>Required before unlocking door</small>
+          {/* 5. Developer Mode Toggle Card */}
+          <div className="card" style={{ border: isDeveloperMode ? '1px solid rgba(245, 158, 11, 0.4)' : undefined }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <IonIcon icon={codeSlashOutline} style={{ fontSize: '22px', color: isDeveloperMode ? '#f59e0b' : 'var(--text-muted)' }} />
+                <div>
+                  <strong style={{ fontSize: '15px', color: isDeveloperMode ? '#f59e0b' : 'var(--text)' }}>
+                    Developer & QA Mode
+                  </strong>
+                  <small style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>
+                    Reveal hardware gateways, telemetry simulators, & QA tools
+                  </small>
+                </div>
               </div>
-              <strong style={{ color: '#38bdf8', fontSize: '16px', letterSpacing: '2px' }}>
-                {currentUser?.doorPasskeyHash || dbService.getAccount().doorPasskeyHash || '1234'}
-              </strong>
-            </div>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <IonButton expand="block" color="light" size="small" onClick={handleChangePasskeyPrompt} style={{ flex: 1 }}>
-                <IonIcon icon={keyOutline} slot="start" />
-                Change PIN
-              </IonButton>
-              <IonButton expand="block" color="warning" fill="outline" size="small" onClick={handleSimulateFailedAuth} style={{ flex: 1 }}>
-                Test Wrong PIN Log
-              </IonButton>
+              <IonToggle 
+                checked={isDeveloperMode} 
+                onIonChange={handleToggleDeveloperMode}
+                color="warning"
+              />
             </div>
           </div>
 
-          {/* 5. Complete Software Testing & QA Suite */}
-          <div className="card" style={{ border: '1px solid rgba(245, 158, 11, 0.4)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
-              <IonIcon icon={bugOutline} style={{ fontSize: '22px', color: '#f59e0b' }} />
-              <h2 style={{ margin: 0, fontSize: '18px', color: '#f59e0b' }}>Software Testing & QA Suite</h2>
-            </div>
-            
-            <p style={{ color: 'var(--text-muted)', fontSize: '12px', margin: '0 0 14px 0' }}>
-              Interact with all safety protocols, telemetry triggers, and failsafes for software quality verification.
-            </p>
-
-            {/* Quick Climate Injections */}
-            <div style={{ marginBottom: '16px' }}>
-              <small style={{ color: 'var(--text-dim)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
-                QUICK TELEMETRY INJECTION
-              </small>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
-                <IonButton size="small" color="light" onClick={() => setExactTemperature(18.0)}>
-                  <IonIcon icon={snowOutline} slot="start" />
-                  Set Cold (18°C)
-                </IonButton>
-                <IonButton size="small" color="light" onClick={() => setExactTemperature(24.5)}>
-                  Set Normal (24.5°C)
-                </IonButton>
-                <IonButton size="small" color="warning" onClick={() => setExactTemperature(38.0)}>
-                  Set High (38°C)
-                </IonButton>
-                <IonButton size="small" color="danger" onClick={() => setExactHumidity(88)}>
-                  Set Humidity (88%)
-                </IonButton>
+          {/* ================= GATED DEVELOPER MODE TOOLS ================= */}
+          {isDeveloperMode && (
+            <>
+              {/* Developer Notice Banner */}
+              <div style={{ 
+                background: 'rgba(245, 158, 11, 0.1)', 
+                border: '1px solid rgba(245, 158, 11, 0.3)', 
+                borderRadius: '12px', 
+                padding: '12px 14px', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '10px' 
+              }}>
+                <IonIcon icon={warningOutline} style={{ fontSize: '22px', color: '#f59e0b', flexShrink: 0 }} />
+                <span style={{ fontSize: '12px', color: '#fcd34d' }}>
+                  <strong>Developer Mode Active:</strong> Low-level IoT gateway and simulator controls are exposed below.
+                </span>
               </div>
-            </div>
 
-            {/* Emergency & Hazard Testing */}
-            <div style={{ marginBottom: '16px' }}>
-              <small style={{ color: 'var(--text-dim)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
-                EMERGENCY & SAFETY FAILSAFES
-              </small>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <IonButton expand="block" color="warning" onClick={() => increaseTemp(10)}>
-                  Increase Temp (+10°C)
-                </IonButton>
-                <IonButton expand="block" color="danger" onClick={simulateSmoke}>
-                  <IonIcon icon={flameOutline} slot="start" />
-                  Simulate Smoke Detection (MQ-2)
-                </IonButton>
-                <IonButton expand="block" color="danger" fill="outline" onClick={simulateExtremeHeat}>
-                  Simulate Extreme Heat (55°C Spike)
-                </IonButton>
-                <IonButton expand="block" color="success" onClick={resetSystem}>
-                  <IonIcon icon={refreshOutline} slot="start" />
-                  Reset Emergency System to Normal
-                </IonButton>
-              </div>
-            </div>
-
-            {/* Database & Mock Data QA */}
-            <div>
-              <small style={{ color: 'var(--text-dim)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
-                DATABASE & LOGGING QA
-              </small>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <IonButton expand="block" color="secondary" fill="outline" onClick={seedDemoLogs}>
-                  <IonIcon icon={sparklesOutline} slot="start" />
-                  Seed 10+ Mock Activity Logs
-                </IonButton>
-                <IonButton expand="block" color="light" onClick={handleExportJson}>
-                  <IonIcon icon={cloudDownloadOutline} slot="start" />
-                  Export DB JSON Snapshot
-                </IonButton>
-                <IonButton 
-                  expand="block" 
-                  color={simulationActive ? "medium" : "success"} 
-                  onClick={toggleSimulation}
+              {/* Hardware Gateway Mode */}
+              <div className="card">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
+                  <IonIcon icon={serverOutline} style={{ fontSize: '20px', color: '#38bdf8' }} />
+                  <h2 style={{ margin: 0, fontSize: '18px' }}>Device Connection Gateway</h2>
+                </div>
+                
+                <IonSegment 
+                  value={hardwareConfig.mode} 
+                  onIonChange={(e) => handleModeChange(e.detail.value as any)}
+                  style={{ background: 'var(--surface-alt)', borderRadius: '10px', marginBottom: '14px' }}
                 >
-                  {simulationActive ? 'Pause Background Simulation' : 'Resume Background Simulation'}
-                </IonButton>
-                <IonButton expand="block" color="danger" fill="clear" onClick={handleFactoryResetPrompt}>
-                  Factory Reset Database
+                  <IonSegmentButton value="simulation">
+                    <IonLabel>Demo Simulation</IonLabel>
+                  </IonSegmentButton>
+                  <IonSegmentButton value="hardware">
+                    <IonLabel>Live ESP32 Board</IonLabel>
+                  </IonSegmentButton>
+                </IonSegment>
+
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <IonButton 
+                    expand="block" 
+                    size="small" 
+                    color="secondary" 
+                    fill="outline"
+                    style={{ flex: 1 }}
+                    onClick={async () => {
+                      const { supabaseApi } = await import('../services/supabaseClient');
+                      const res = await supabaseApi.testConnection();
+                      presentToast({
+                        message: res.success ? '🟢 Supabase Cloud: Online & Connected' : `🔴 Supabase Cloud: ${res.message}`,
+                        duration: 3000,
+                        color: res.success ? 'success' : 'danger'
+                      });
+                    }}
+                  >
+                    <IonIcon icon={cloudDownloadOutline} slot="start" />
+                    Test Supabase Cloud
+                  </IonButton>
+                </div>
+
+                {hardwareConfig.mode === 'hardware' && (
+                  <div style={{ background: 'rgba(56, 189, 248, 0.08)', padding: '14px', borderRadius: '12px', border: '1px solid rgba(56, 189, 248, 0.2)' }}>
+                    <IonItem lines="none" style={{ '--background': 'transparent', margin: 0 }}>
+                      <IonLabel position="stacked" style={{ color: '#38bdf8', fontSize: '12px' }}>
+                        ESP32 Local IP Address
+                      </IonLabel>
+                      <IonInput 
+                        value={espIpInput} 
+                        placeholder="e.g. 192.168.1.50"
+                        onIonInput={(e) => setEspIpInput(e.detail.value!)}
+                        style={{ color: '#fff', fontSize: '16px' }}
+                      />
+                    </IonItem>
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                      <IonButton expand="block" size="small" color="primary" onClick={handleSaveHardwareIp} style={{ flex: 1 }}>
+                        Save IP
+                      </IonButton>
+                      <IonButton expand="block" size="small" color="light" onClick={pollDevices} style={{ flex: 1 }}>
+                        Ping Test
+                      </IonButton>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Complete Software Testing & QA Suite */}
+              <div className="card" style={{ border: '1px solid rgba(245, 158, 11, 0.4)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                  <IonIcon icon={bugOutline} style={{ fontSize: '22px', color: '#f59e0b' }} />
+                  <h2 style={{ margin: 0, fontSize: '18px', color: '#f59e0b' }}>Software Testing & QA Suite</h2>
+                </div>
+                
+                <p style={{ color: 'var(--text-muted)', fontSize: '12px', margin: '0 0 14px 0' }}>
+                  Interact with all safety protocols, telemetry triggers, and failsafes for software quality verification.
+                </p>
+
+                {/* Quick Climate Injections */}
+                <div style={{ marginBottom: '16px' }}>
+                  <small style={{ color: 'var(--text-dim)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
+                    QUICK TELEMETRY INJECTION
+                  </small>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                    <IonButton size="small" color="light" onClick={() => setExactTemperature(18.0)}>
+                      <IonIcon icon={snowOutline} slot="start" />
+                      Set Cold (18°C)
+                    </IonButton>
+                    <IonButton size="small" color="light" onClick={() => setExactTemperature(24.5)}>
+                      Set Normal (24.5°C)
+                    </IonButton>
+                    <IonButton size="small" color="warning" onClick={() => setExactTemperature(38.0)}>
+                      Set High (38°C)
+                    </IonButton>
+                    <IonButton size="small" color="danger" onClick={() => setExactHumidity(88)}>
+                      Set Humidity (88%)
+                    </IonButton>
+                  </div>
+                </div>
+
+                {/* Emergency & Hazard Testing */}
+                <div style={{ marginBottom: '16px' }}>
+                  <small style={{ color: 'var(--text-dim)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
+                    EMERGENCY & SAFETY FAILSAFES
+                  </small>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <IonButton expand="block" color="warning" onClick={() => increaseTemp(10)}>
+                      Increase Temp (+10°C)
+                    </IonButton>
+                    <IonButton expand="block" color="danger" onClick={simulateSmoke}>
+                      <IonIcon icon={flameOutline} slot="start" />
+                      Simulate Smoke Detection (MQ-2)
+                    </IonButton>
+                    <IonButton expand="block" color="danger" fill="outline" onClick={simulateExtremeHeat}>
+                      Simulate Extreme Heat (55°C Spike)
+                    </IonButton>
+                    <IonButton expand="block" color="success" onClick={resetSystem}>
+                      <IonIcon icon={refreshOutline} slot="start" />
+                      Reset Emergency System to Normal
+                    </IonButton>
+                  </div>
+                </div>
+
+                {/* Database & Mock Data QA */}
+                <div>
+                  <small style={{ color: 'var(--text-dim)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
+                    DATABASE & LOGGING QA
+                  </small>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <IonButton expand="block" color="warning" fill="outline" size="small" onClick={handleSimulateFailedAuth}>
+                      Test Failed Auth Log
+                    </IonButton>
+                    <IonButton expand="block" color="secondary" fill="outline" onClick={seedDemoLogs}>
+                      <IonIcon icon={sparklesOutline} slot="start" />
+                      Seed 10+ Mock Activity Logs
+                    </IonButton>
+                    <IonButton expand="block" color="light" onClick={handleExportJson}>
+                      <IonIcon icon={cloudDownloadOutline} slot="start" />
+                      Export DB JSON Snapshot
+                    </IonButton>
+                    <IonButton 
+                      expand="block" 
+                      color={simulationActive ? "medium" : "success"} 
+                      onClick={toggleSimulation}
+                    >
+                      {simulationActive ? 'Pause Background Simulation' : 'Resume Background Simulation'}
+                    </IonButton>
+                    <IonButton expand="block" color="danger" fill="clear" onClick={handleFactoryResetPrompt}>
+                      Factory Reset Database
+                    </IonButton>
+                  </div>
+                </div>
+              </div>
+
+              {/* System Diagnostics */}
+              <div className="card">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <h3 style={{ margin: 0, fontSize: '15px' }}>Diagnostics & Health</h3>
+                  <span style={{ color: 'var(--success)', fontSize: '13px', fontWeight: 'bold' }}>
+                    Health: {networkHealth}%
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '13px', marginBottom: '14px' }}>
+                  <span>Latency Ping</span>
+                  <span style={{ color: 'var(--text)' }}>{latencyMs}ms</span>
+                </div>
+                <IonButton expand="block" color="light" size="small" onClick={pollDevices}>
+                  <IonIcon icon={refreshOutline} slot="start" />
+                  Refresh Diagnostic Ping
                 </IonButton>
               </div>
-            </div>
-          </div>
-
-          {/* 6. System Diagnostics */}
-          <div className="card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-              <h3 style={{ margin: 0, fontSize: '15px' }}>Diagnostics & Health</h3>
-              <span style={{ color: 'var(--success)', fontSize: '13px', fontWeight: 'bold' }}>
-                Health: {networkHealth}%
-              </span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-muted)', fontSize: '13px', marginBottom: '14px' }}>
-              <span>Latency Ping</span>
-              <span style={{ color: 'var(--text)' }}>{latencyMs}ms</span>
-            </div>
-            <IonButton expand="block" color="light" size="small" onClick={pollDevices}>
-              <IonIcon icon={refreshOutline} slot="start" />
-              Refresh Diagnostic Ping
-            </IonButton>
-          </div>
+            </>
+          )}
 
         </div>
       </IonContent>

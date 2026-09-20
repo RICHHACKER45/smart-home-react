@@ -31,7 +31,6 @@ const DEFAULT_ADMIN: Account = {
   email: 'admin@smarthome.local',
   passwordHash: 'password123', // Standard initial password for testing
   doorPasskeyHash: '1234',      // Default 4-digit PIN for door lock/unlock
-  role: 'admin',
   status: 'active',
   createdAt: new Date().toISOString()
 };
@@ -375,7 +374,6 @@ class DatabaseService {
       email: cleanEmail,
       passwordHash: hashedPass,
       doorPasskeyHash: hashedPin,
-      role: 'admin',
       status: 'active',
       createdAt: new Date().toISOString()
     };

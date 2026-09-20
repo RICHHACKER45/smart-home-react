@@ -3,7 +3,6 @@
  * Matching the relational database schema in IMPLEMENTATION.md
  */
 
-export type UserRole = 'admin' | 'resident' | 'guest';
 export type AccountStatus = 'active' | 'suspended';
 export type DeviceType = 'door_lock' | 'climate_sensor' | 'smoke_detector' | 'combo_hub';
 export type DeviceStatus = 'active' | 'inactive' | 'maintenance' | 'decommissioned';
@@ -18,7 +17,6 @@ export interface Account {
   email?: string;
   passwordHash: string;
   doorPasskeyHash: string; // 4-6 digit hashed PIN
-  role: UserRole;
   status: AccountStatus;
   fcmPushToken?: string;
   createdAt: string;

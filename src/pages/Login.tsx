@@ -39,8 +39,8 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'otp_verify'>('signin');
   
   // Sign In State
-  const [signinIdentifier, setSigninIdentifier] = useState<string>('admin');
-  const [signinPassword, setSigninPassword] = useState<string>('password123');
+  const [signinIdentifier, setSigninIdentifier] = useState<string>('');
+  const [signinPassword, setSigninPassword] = useState<string>('');
   
   // Sign Up State
   const [signupUsername, setSignupUsername] = useState<string>('');

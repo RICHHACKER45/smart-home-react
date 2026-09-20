@@ -44,7 +44,9 @@ export const PasskeyModal: React.FC<PasskeyModalProps> = ({
         try {
           await Haptics.notification({ type: NotificationType.Success });
         } catch {}
-        dbService.logActivity('admin', 'AUTH', `Passkey verified successfully for ${targetActionName}`, 'SUCCESS');
+        const currentSession = dbService.getCurrentSession();
+        const actor = currentSession ? currentSession.username : 'User';
+        dbService.logActivity(actor, 'AUTH', `Passkey verified successfully for ${targetActionName}`, 'SUCCESS');
         setTimeout(() => {
           setPin('');
           onSuccess();

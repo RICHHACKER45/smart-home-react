@@ -47,7 +47,6 @@ export const supabaseApi = {
           email: acc.email,
           passwordHash: acc.password_hash,
           doorPasskeyHash: acc.door_passkey_hash,
-          role: acc.role,
           status: acc.status,
           fcmPushToken: acc.fcm_push_token,
           createdAt: acc.created_at
@@ -78,7 +77,6 @@ export const supabaseApi = {
           email: acc.email,
           passwordHash: acc.password_hash,
           doorPasskeyHash: acc.door_passkey_hash,
-          role: acc.role,
           status: acc.status,
           fcmPushToken: acc.fcm_push_token,
           createdAt: acc.created_at
@@ -101,7 +99,6 @@ export const supabaseApi = {
           email: account.email || null,
           password_hash: account.passwordHash,
           door_passkey_hash: account.doorPasskeyHash || '1234',
-          role: account.role || 'admin',
           status: account.status || 'active',
           created_at: account.createdAt || new Date().toISOString()
         })

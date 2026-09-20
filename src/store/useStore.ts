@@ -13,6 +13,10 @@ export interface SmartHomeState {
   isAuthenticated: boolean;
   currentUser: Account | null;
   isLocked: boolean;
+  isDoorAuthorized: boolean;
+  doorAuthExpiresAt: number | null;
+  doorSessionDurationMinutes: number;
+  isDeveloperMode: boolean;
   temperature: number;
   humidity: number;
   latencyMs: number;
@@ -39,7 +43,10 @@ export interface SmartHomeState {
   openPasskeyModal: () => void;
   closePasskeyModal: () => void;
   executeAuthenticatedDoorToggle: () => Promise<void>;
-  toggleLock: () => void;
+  toggleLock: () => Promise<void>;
+  setDoorSessionDurationMinutes: (mins: number) => void;
+  revokeDoorAuthorization: () => void;
+  toggleDeveloperMode: (enable?: boolean) => void;
   increaseTemp: (amount: number) => void;
   setExactTemperature: (temp: number) => void;
   setExactHumidity: (hum: number) => void;
@@ -96,6 +103,10 @@ export const useStore = create<SmartHomeState>((set, get) => {
     isAuthenticated: initialSession !== null,
     currentUser: initialSession,
     isLocked: true,
+    isDoorAuthorized: false,
+    doorAuthExpiresAt: null,
+    doorSessionDurationMinutes: parseInt(localStorage.getItem('smart_home_door_duration') || '30', 10),
+    isDeveloperMode: localStorage.getItem('smart_home_dev_mode') === 'true',
     temperature: 24.8,
     humidity: 47,
     latencyMs: 12,
@@ -153,9 +164,26 @@ export const useStore = create<SmartHomeState>((set, get) => {
       set({
         isAuthenticated: false,
         currentUser: null,
+        isDoorAuthorized: false,
+        doorAuthExpiresAt: null,
         devices: dbService.getDevices(),
         logs: dbService.getActivityLogs()
       });
+    },
+
+    setDoorSessionDurationMinutes: (mins: number) => {
+      localStorage.setItem('smart_home_door_duration', mins.toString());
+      set({ doorSessionDurationMinutes: mins });
+    },
+
+    revokeDoorAuthorization: () => {
+      set({ isDoorAuthorized: false, doorAuthExpiresAt: null });
+    },
+
+    toggleDeveloperMode: (enable?: boolean) => {
+      const next = enable !== undefined ? enable : !get().isDeveloperMode;
+      localStorage.setItem('smart_home_dev_mode', next.toString());
+      set({ isDeveloperMode: next });
     },
 
     openPasskeyModal: () => set({ isPasskeyModalOpen: true }),
@@ -166,6 +194,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
       if (state.isAlarming) return;
 
       const newLocked = !state.isLocked;
+      const durationMs = (state.doorSessionDurationMinutes || 30) * 60 * 1000;
+      const newExpiry = Date.now() + durationMs;
 
       // If live hardware is configured, send command to ESP32
       if (state.hardwareConfig.mode === 'hardware') {
@@ -175,25 +205,53 @@ export const useStore = create<SmartHomeState>((set, get) => {
         }
       }
 
-      const actor = state.currentUser ? state.currentUser.username : 'admin';
+      const actor = state.currentUser ? state.currentUser.username : 'User';
       dbService.logActivity(
         actor, 
         'DOOR', 
-        `Door ${newLocked ? 'Locked' : 'Unlocked'} via Passkey Verification`, 
+        `Door ${newLocked ? 'Locked' : 'Unlocked'} with Passkey (${state.doorSessionDurationMinutes}m session authorized)`, 
         'SUCCESS'
       );
 
       set(checkSafetyRules({
         isLocked: newLocked,
+        isDoorAuthorized: true,
+        doorAuthExpiresAt: newExpiry,
         isPasskeyModalOpen: false
       }));
     },
 
-    toggleLock: () => {
+    toggleLock: async () => {
       const state = get();
       if (state.isAlarming) return;
-      // Open security passkey modal instead of direct bypass
-      set({ isPasskeyModalOpen: true });
+
+      // 1. If door is currently UNLOCKED and user wants to LOCK:
+      if (!state.isLocked) {
+        // Direct lock permitted
+        if (state.hardwareConfig.mode === 'hardware') {
+          await sendESP32DoorCommand(state.hardwareConfig.esp32Ip, 'lock');
+        }
+        const actor = state.currentUser ? state.currentUser.username : 'User';
+        dbService.logActivity(actor, 'DOOR', 'Door manually locked', 'SUCCESS');
+        set(checkSafetyRules({ isLocked: true }));
+        return;
+      }
+
+      // 2. If door is currently LOCKED and user wants to UNLOCK:
+      const isSessionActive = state.isDoorAuthorized && state.doorAuthExpiresAt && Date.now() < state.doorAuthExpiresAt;
+
+      if (isSessionActive) {
+        // Session is still authorized: direct unlock without asking for PIN again
+        if (state.hardwareConfig.mode === 'hardware') {
+          await sendESP32DoorCommand(state.hardwareConfig.esp32Ip, 'unlock');
+        }
+        const actor = state.currentUser ? state.currentUser.username : 'User';
+        dbService.logActivity(actor, 'DOOR', 'Door unlocked (Active Passkey Session)', 'SUCCESS');
+        set(checkSafetyRules({ isLocked: false }));
+      } else {
+        // Authorization expired or inactive: prompt for 4-digit security PIN
+        set({ isDoorAuthorized: false, doorAuthExpiresAt: null, isPasskeyModalOpen: true });
+      }
     },
 
     increaseTemp: (amount) => set((state) => {
@@ -236,7 +294,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
       if (state.hardwareConfig.mode === 'hardware') {
         resetESP32Alarm(state.hardwareConfig.esp32Ip);
       }
-      dbService.logActivity('admin', 'SYSTEM', 'System emergency reset executed to normal state');
+      const actor = state.currentUser?.username || 'System';
+      dbService.logActivity(actor, 'SYSTEM', 'System emergency reset executed to normal state');
       set((s) => ({
         isLocked: true,
         temperature: 24.8,
@@ -253,13 +312,16 @@ export const useStore = create<SmartHomeState>((set, get) => {
     },
 
     addLog: (text, category = 'SYSTEM') => {
-      dbService.logActivity('App User', category, text);
+      const state = get();
+      const actor = state.currentUser?.username || 'App User';
+      dbService.logActivity(actor, category, text);
       set({ logs: dbService.getActivityLogs() });
     },
 
     toggleSimulation: () => set((state) => {
       const next = !state.simulationActive;
-      dbService.logActivity('admin', 'SYSTEM', `Data Simulation ${next ? 'Enabled' : 'Disabled'}`);
+      const actor = state.currentUser?.username || 'System';
+      dbService.logActivity(actor, 'SYSTEM', `Data Simulation ${next ? 'Enabled' : 'Disabled'}`);
       return {
         simulationActive: next,
         logs: dbService.getActivityLogs()
