@@ -108,7 +108,7 @@ export const PasskeyModal: React.FC<PasskeyModalProps> = ({
         {errorMessage ? (
           <div className="passkey-error-text">{errorMessage}</div>
         ) : (
-          <div className="passkey-hint-text">Default Testing PIN: <strong>1234</strong></div>
+          <div className="passkey-hint-text">Enter your 4-digit security PIN</div>
         )}
 
         {/* Numeric Keypad */}

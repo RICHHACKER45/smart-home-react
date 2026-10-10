@@ -79,16 +79,17 @@
 }
 
 .custom-auth-segment .segment-btn {
-  --background: transparent;
-  --background-checked: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
   --color: #94a3b8;
   --color-checked: #ffffff;
-  --indicator-color: transparent;
-  border-radius: 10px;
+  --indicator-color: #0369a1;
   font-weight: 700;
   font-size: 13px;
   min-height: 38px;
-  transition: all 0.2s ease;
+}
+
+.custom-auth-segment .segment-btn::part(indicator-background) {
+  border-radius: 10px;
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
 }
 
 .custom-auth-segment .segment-btn ion-icon {
@@ -161,10 +162,19 @@
 }
 
 .custom-input {
-  --color: #ffffff;
-  --placeholder-color: #64748b;
+  color: #ffffff;
+  background: transparent;
+  border: none;
+  outline: none;
+  width: 100%;
+  padding: 14px 0;
   font-size: 15px;
   font-weight: 500;
+  box-shadow: none !important;
+}
+
+.custom-input::placeholder {
+  color: #64748b;
 }
 
 .toggle-password-btn {
@@ -187,11 +197,32 @@
   font-size: 15px;
   margin-top: 8px;
   height: 50px;
+  transition: transform 0.15s ease-in-out, box-shadow 0.15s ease-in-out;
+}
+
+.login-submit-btn:active {
+  transform: scale(0.95);
+  --box-shadow: 0 5px 15px -5px rgba(56, 189, 248, 0.4);
 }
 
 .login-submit-btn.signup-btn {
   --background: linear-gradient(135deg, #10b981 0%, #059669 100%);
   --box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4);
+}
+
+.login-submit-btn.signup-btn:active {
+  --box-shadow: 0 5px 15px -5px rgba(16, 185, 129, 0.4);
+}
+
+@keyframes pulseLoading {
+  0% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(0.98); opacity: 0.7; }
+  100% { transform: scale(1); opacity: 0.9; }
+}
+
+.is-loading-btn {
+  animation: pulseLoading 1.5s infinite ease-in-out;
+  pointer-events: none;
 }
 
 .login-hint-card {
@@ -286,27 +317,44 @@
 
 .otp-input-wrapper {
   background: #0d1a2d;
-  border: 2px solid rgba(56, 189, 248, 0.4);
+  border: 2px solid rgba(56, 189, 248, 0.5);
   border-radius: 16px;
-  padding: 4px 12px;
-  text-align: center;
+  padding: 6px 12px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
   box-shadow: 0 0 20px rgba(56, 189, 248, 0.15);
   transition: all 0.2s ease;
+  box-sizing: border-box;
+  width: 100%;
 }
 
 .otp-input-wrapper:focus-within {
   border-color: #38bdf8;
-  box-shadow: 0 0 25px rgba(56, 189, 248, 0.4);
+  box-shadow: 0 0 25px rgba(56, 189, 248, 0.45);
 }
 
 .otp-code-input {
-  --color: #38bdf8;
-  --placeholder-color: #334155;
-  font-family: monospace;
-  font-size: 32px;
-  font-weight: 900;
-  letter-spacing: 14px;
+  width: 100%;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  color: #38bdf8 !important;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 8px;
+  text-indent: 8px;
   text-align: center;
+  padding: 8px 0;
+  box-sizing: border-box;
+  box-shadow: none !important;
+}
+
+.otp-code-input::placeholder {
+  color: #334155;
+  opacity: 0.7;
+  letter-spacing: 8px;
 }
 
 .otp-hint-text {

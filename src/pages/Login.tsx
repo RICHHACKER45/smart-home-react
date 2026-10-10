@@ -35,8 +35,8 @@ interface LoginProps {
 }
 
 const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
-  const { login, requestOtp, verifyOtp, register } = useStore();
-  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'otp_verify'>('signin');
+  const { login, requestOtp, verifyOtp, register, requestPasswordReset, resetPasswordWithOtp } = useStore();
+  const [authMode, setAuthMode] = useState<'signin' | 'signup' | 'otp_verify' | 'forgot_password' | 'forgot_password_otp'>('signin');
   
   // Sign In State
   const [signinIdentifier, setSigninIdentifier] = useState<string>('');
@@ -47,12 +47,16 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [signupEmail, setSignupEmail] = useState<string>('');
   const [signupPassword, setSignupPassword] = useState<string>('');
   const [signupConfirmPass, setSignupConfirmPass] = useState<string>('');
-  const [signupPin, setSignupPin] = useState<string>('1234');
+  const [signupPin, setSignupPin] = useState<string>('');
   
   // OTP Verification State
   const [enteredOtp, setEnteredOtp] = useState<string>('');
   const [resendCooldown, setResendCooldown] = useState<number>(0);
 
+  // Forgot Password State
+  const [forgotEmail, setForgotEmail] = useState<string>('');
+  const [forgotNewPassword, setForgotNewPassword] = useState<string>('');
+  
   // Common UI State
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -193,7 +197,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       username: signupUsername,
       email: signupEmail,
       password: signupPassword,
-      doorPasskey: signupPin || '1234'
+      doorPasskey: signupPin.trim()
     });
 
     setIsLoading(false);
@@ -236,6 +240,60 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    
+    if (!forgotEmail.trim()) {
+      setErrorMessage('Please enter your registered email address.');
+      return;
+    }
+
+    setIsLoading(true);
+    const res = await requestPasswordReset(forgotEmail);
+    setIsLoading(false);
+
+    if (res.success) {
+      setAuthMode('forgot_password_otp');
+      setResendCooldown(60);
+      presentToast({
+        message: `Password reset code sent to ${forgotEmail}`,
+        duration: 2500,
+        color: 'success'
+      });
+    } else {
+      setErrorMessage(res.message || 'Failed to send reset code.');
+    }
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage('');
+    
+    if (!enteredOtp.trim() || !forgotNewPassword.trim()) {
+      setErrorMessage('Please enter the OTP and a new password.');
+      return;
+    }
+
+    setIsLoading(true);
+    const res = await resetPasswordWithOtp(forgotEmail, enteredOtp, forgotNewPassword);
+    setIsLoading(false);
+
+    if (res.success) {
+      setAuthMode('signin');
+      setSigninIdentifier(forgotEmail);
+      setSigninPassword(forgotNewPassword);
+      setEnteredOtp('');
+      presentToast({
+        message: 'Password successfully reset! You can now sign in.',
+        duration: 3000,
+        color: 'success'
+      });
+    } else {
+      setErrorMessage(res.message || 'Failed to reset password.');
+    }
+  };
+
   const handleFillDemo = () => {
     setAuthMode('signin');
     setSigninIdentifier('admin');
@@ -259,7 +317,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
             </div>
 
             {/* Auth Mode Toggle Tabs (Hidden during OTP step) */}
-            {authMode !== 'otp_verify' && (
+            {(authMode === 'signin' || authMode === 'signup') && (
               <div className="auth-segment-wrapper">
                 <IonSegment 
                   value={authMode} 
@@ -296,11 +354,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <IonLabel className="input-label">Username or Email</IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={personOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type="text"
                       value={signinIdentifier}
                       placeholder="Enter username or email"
-                      onIonInput={(e) => setSigninIdentifier(e.detail.value!)}
+                      onChange={(e) => setSigninIdentifier(e.target.value)}
                       required
                       className="custom-input"
                     />
@@ -311,11 +369,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <IonLabel className="input-label">Password</IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={lockClosedOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type={showPassword ? 'text' : 'password'}
                       value={signinPassword}
                       placeholder="Enter password"
-                      onIonInput={(e) => setSigninPassword(e.detail.value!)}
+                      onChange={(e) => setSigninPassword(e.target.value)}
                       required
                       className="custom-input"
                     />
@@ -332,7 +390,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 <IonButton 
                   type="submit" 
                   expand="block" 
-                  className="login-submit-btn" 
+                  className={`login-submit-btn ${isLoading ? 'is-loading-btn' : ''}`}
                   disabled={isLoading}
                 >
                   {isLoading ? (
@@ -344,6 +402,19 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     </>
                   )}
                 </IonButton>
+
+                <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                  <button 
+                    type="button" 
+                    className="demo-fill-btn" 
+                    onClick={() => {
+                      setAuthMode('forgot_password');
+                      setErrorMessage('');
+                    }}
+                  >
+                    Forgot Password?
+                  </button>
+                </div>
               </form>
             )}
 
@@ -354,11 +425,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <IonLabel className="input-label">Username</IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={personOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type="text"
                       value={signupUsername}
                       placeholder="Choose a username (e.g. alex)"
-                      onIonInput={(e) => setSignupUsername(e.detail.value!)}
+                      onChange={(e) => setSignupUsername(e.target.value)}
                       required
                       className="custom-input"
                     />
@@ -369,11 +440,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <IonLabel className="input-label">Email Address</IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={mailOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type="email"
                       value={signupEmail}
                       placeholder="e.g. your-email@gmail.com"
-                      onIonInput={(e) => setSignupEmail(e.detail.value!)}
+                      onChange={(e) => setSignupEmail(e.target.value)}
                       required
                       className="custom-input"
                     />
@@ -384,11 +455,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <IonLabel className="input-label">Password</IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={lockClosedOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type={showPassword ? 'text' : 'password'}
                       value={signupPassword}
                       placeholder="Min 6 characters"
-                      onIonInput={(e) => setSignupPassword(e.detail.value!)}
+                      onChange={(e) => setSignupPassword(e.target.value)}
                       required
                       className="custom-input"
                     />
@@ -406,11 +477,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   <IonLabel className="input-label">Confirm Password</IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={lockClosedOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type={showPassword ? 'text' : 'password'}
                       value={signupConfirmPass}
                       placeholder="Re-enter password"
-                      onIonInput={(e) => setSignupConfirmPass(e.detail.value!)}
+                      onChange={(e) => setSignupConfirmPass(e.target.value)}
                       required
                       className="custom-input"
                     />
@@ -423,13 +494,13 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                   </IonLabel>
                   <div className="input-wrapper">
                     <IonIcon icon={keyOutline} className="input-icon" />
-                    <IonInput
+                    <input
                       type="password"
                       value={signupPin}
-                      placeholder="1234"
-                      maxlength={4}
-                      inputmode="numeric"
-                      onIonInput={(e) => setSignupPin(e.detail.value!)}
+                      placeholder="e.g. 5678"
+                      maxLength={4}
+                      inputMode="numeric"
+                      onChange={(e) => setSignupPin(e.target.value)}
                       className="custom-input"
                     />
                   </div>
@@ -438,7 +509,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 <IonButton 
                   type="submit" 
                   expand="block" 
-                  className="login-submit-btn signup-btn" 
+                  className={`login-submit-btn signup-btn ${isLoading ? 'is-loading-btn' : ''}`}
                   disabled={isLoading}
                 >
                   {isLoading ? (
@@ -472,16 +543,16 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                     Enter 6-Digit Code
                   </IonLabel>
                   <div className="otp-input-wrapper">
-                    <IonInput
+                    <input
                       type="text"
-                      inputmode="numeric"
-                      maxlength={6}
+                      inputMode="numeric"
+                      maxLength={6}
                       value={enteredOtp}
                       placeholder="------"
-                      onIonInput={(e) => setEnteredOtp(e.detail.value || '')}
+                      onChange={(e) => setEnteredOtp(e.target.value)}
                       required
                       className="otp-code-input"
-                      autofocus
+                      autoFocus
                     />
                   </div>
                   <small className="otp-hint-text">Valid for 10 minutes</small>
@@ -490,7 +561,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
                 <IonButton 
                   type="submit" 
                   expand="block" 
-                  className="login-submit-btn signup-btn" 
+                  className={`login-submit-btn signup-btn ${isLoading ? 'is-loading-btn' : ''}`}
                   disabled={isLoading || enteredOtp.length !== 6}
                 >
                   {isLoading ? (
@@ -529,20 +600,126 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
               </form>
             )}
 
-            {/* Default Credentials Hint Card (Available in Sign In mode) */}
-            {authMode === 'signin' && (
-              <div className="login-hint-card" onClick={handleFillDemo}>
-                <div className="hint-header">
-                  <IonIcon icon={sparklesOutline} className="hint-icon" />
-                  <span>Default Testing Credentials (Tap to Fill)</span>
+            {/* FORGOT PASSWORD FORM */}
+            {authMode === 'forgot_password' && (
+              <form onSubmit={handleForgotPassword} className="login-form">
+                <p style={{ textAlign: 'center', color: 'var(--text-dim)', marginBottom: '20px' }}>
+                  Enter your registered email address to receive a password reset code.
+                </p>
+                <div className="input-group">
+                  <IonLabel className="input-label">Email Address</IonLabel>
+                  <div className="input-wrapper">
+                    <IonIcon icon={mailOutline} className="input-icon" />
+                    <input
+                      type="email"
+                      value={forgotEmail}
+                      placeholder="e.g. your-email@gmail.com"
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      required
+                      className="custom-input"
+                    />
+                  </div>
                 </div>
-                <div className="hint-credentials">
-                  <div>User: <strong>admin</strong></div>
-                  <div>Pass: <strong>password123</strong></div>
-                  <div>Door PIN: <strong>1234</strong></div>
-                </div>
-              </div>
+                
+                <IonButton 
+                  type="submit" 
+                  expand="block" 
+                  className={`login-submit-btn ${isLoading ? 'is-loading-btn' : ''}`}
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Sending...' : 'Send Reset Code'}
+                </IonButton>
+
+                <IonButton 
+                  type="button"
+                  expand="block"
+                  fill="clear"
+                  color="medium"
+                  onClick={() => setAuthMode('signin')}
+                  disabled={isLoading}
+                  style={{ marginTop: '10px' }}
+                >
+                  <IonIcon icon={arrowBackOutline} slot="start" />
+                  Back to Sign In
+                </IonButton>
+              </form>
             )}
+
+            {/* FORGOT PASSWORD OTP VERIFICATION */}
+            {authMode === 'forgot_password_otp' && (
+              <form onSubmit={handleResetPassword} className="login-form">
+                <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                  <IonIcon icon={mailOutline} style={{ fontSize: '40px', color: 'var(--primary)' }} />
+                  <p style={{ color: 'var(--text-dim)', marginTop: '10px' }}>
+                    We sent a 6-digit verification code to<br/>
+                    <strong style={{ color: 'var(--text)' }}>{forgotEmail}</strong>
+                  </p>
+                </div>
+
+                <div className="input-group">
+                  <IonLabel className="input-label" style={{ textAlign: 'center' }}>
+                    Verification Code (OTP)
+                  </IonLabel>
+                  <div className="otp-input-wrapper">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={enteredOtp}
+                      placeholder="------"
+                      onChange={(e) => setEnteredOtp(e.target.value)}
+                      required
+                      className="otp-code-input"
+                      maxLength={6}
+                    />
+                  </div>
+                </div>
+
+                <div className="input-group">
+                  <IonLabel className="input-label">New Password</IonLabel>
+                  <div className="input-wrapper">
+                    <IonIcon icon={lockClosedOutline} className="input-icon" />
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={forgotNewPassword}
+                      placeholder="Enter new password"
+                      onChange={(e) => setForgotNewPassword(e.target.value)}
+                      required
+                      className="custom-input"
+                    />
+                    <button 
+                      type="button" 
+                      className="toggle-password-btn" 
+                      onClick={() => setShowPassword(!showPassword)}
+                    >
+                      <IonIcon icon={showPassword ? eyeOffOutline : eyeOutline} />
+                    </button>
+                  </div>
+                </div>
+
+                <IonButton 
+                  type="submit" 
+                  expand="block" 
+                  className={`login-submit-btn signup-btn ${isLoading ? 'is-loading-btn' : ''}`}
+                  disabled={isLoading}
+                >
+                  {isLoading ? 'Resetting...' : 'Reset Password'}
+                </IonButton>
+
+                <IonButton 
+                  type="button"
+                  expand="block"
+                  fill="clear"
+                  color="medium"
+                  onClick={() => setAuthMode('forgot_password')}
+                  disabled={isLoading}
+                  style={{ marginTop: '10px' }}
+                >
+                  <IonIcon icon={arrowBackOutline} slot="start" />
+                  Go Back
+                </IonButton>
+              </form>
+            )}
+
 
           </div>
 
