@@ -1,437 +1,560 @@
 /*
-  ============================================================
-   ESP32 FULL SMART HOME DEVICE
-  ============================================================
-  Features
-   - DHT11 temperature + humidity
-   - MQ2 gas/smoke detection (auto-calibrated)
-   - Buzzer alarm + servo (vent/door) when gas or heat detected
-   - Built-in web dashboard (no React / npm needed): open it from
-     any phone or PC on the same Wi-Fi
-   - Controls: open/close vent, test alarm, mute buzzer,
-     change temperature and gas limits
-   - Fallback hotspot if Wi-Fi fails: "SmartHome-ESP32" / 12345678
-     then open http://192.168.4.1
+  ========================================================================================
+   ESP32 SMART HOME CONTROLLER & SENSOR GATEWAY (360° SERVO & SENSOR EDITION)
+  ========================================================================================
+   Hardware Connected:
+    - ESP32 Development Board (ESP-WROOM-32) on Expansion Board
+    - 🚪 360° Continuous Rotation Servo Motor on GPIO 18 (Door Lock Mechanism)
+         * UNLOCK / OPEN = Rotates Clockwise ~90° and STOPS
+         * LOCK / CLOSE   = Rotates Counter-Clockwise ~90° and STOPS
+    - 🚨 MQ-2 Gas / Smoke Sensor on GPIO 34 (Analog AO on ADC1)
+    - 🔊 5V Active-Low Buzzer on GPIO 23 (Tri-State High-Z: 0 hum when idle, loud on alarm)
+    - 🌡️ DHT11 / DHT22 Sensor on GPIO 4 (Temperature Limit set to 40.0°C)
+    - 💡 Built-in Blue LED on GPIO 2 (WiFi & Alarm Indicator)
 
-  Wiring
-   DHT11 DATA -> GPIO4         (VCC 3.3V, GND)
-   MQ2 AO     -> GPIO34        (through 10k/20k voltage divider, VCC 5V, GND)
-   Servo SIG  -> GPIO18        (VCC 5V, GND)
-   Buzzer     -> GPIO23 via 1k resistor + NPN transistor (see notes)
-   All GND connected together
-
-  Libraries (Library Manager):
-   "DHT sensor library" (Adafruit), "Adafruit Unified Sensor", "ESP32Servo"
-  Board: ESP32 Dev Module
+   360° Continuous Servo Control Explained:
+    - On a 360° servo, write(90) = STOP, write(140) = Spin CW, write(40) = Spin CCW.
+    - To perform a clean 90° turn: We spin at a controlled speed for ~350ms, then command
+      write(90) (STOP) and detach to prevent any continuous spinning or motor jitter!
+  ========================================================================================
 */
 
 #include <WiFi.h>
+#include <WiFiManager.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <DHT.h>
 #include <ESP32Servo.h>
 
-// ================= EDIT THESE =================
-const char* WIFI_SSID = "YOUR_WIFI_NAME";      // 2.4 GHz only
-const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
-// ==============================================
+// ===================================================== 
+//  1. HARDWARE PIN DEFINITIONS & SETTINGS
+// =====================================================
+#define SERVO_PIN    18      // Servo Motor Signal (Yellow/Orange wire)
+#define MQ2_PIN      34      // MQ-2 Analog AO (ADC1 channel, 100% WiFi safe)
+#define BUZZER_PIN   23      // Buzzer Signal pin (GPIO 23)
+#define DHT_PIN      4       // DHT11 or DHT22 Data pin (GPIO 4)
+#define LED_PIN      2       // ESP32 Onboard Blue LED (GPIO 2)
 
-#define DHT_PIN     4
-#define MQ2_PIN     34
-#define SERVO_PIN   18
-#define BUZZER_PIN  23
-#define DHT_TYPE    DHT11
-#define BUZZER_ACTIVE_LOW false     // true if buzzer module sounds on LOW
+#define DHT_TYPE     DHT11   // Change to DHT22 if using white DHT22 sensor
 
-// ---------- Settings ----------
-const int   MANUAL_GAS_LIMIT = 0;   // 0 = auto-calibrate at startup
-const int   GAS_MARGIN       = 400; // auto limit = clean air + margin (taasan kung may false alarm)
-const int   GAS_HYST         = 80;
-const float TEMP_HYST        = 2.0;
-const int   SERVO_MIN        = 0;   // closed
-const int   SERVO_MAX        = 90;  // open
-const int   SERVO_STEP       = 6;
-const unsigned long SERVO_INTERVAL = 10;
-const unsigned long WARMUP_MS      = 60000;   // MQ2 needs ~1 min to stabilise before calibration
-const bool  SERVO_SWEEP_ON_ALARM = false; // false = servo OPENS and STAYS open during alarm
-                                          // true  = servo sweeps back and forth
-const int   T_SAMPLES        = 5;         // temperature averaging (smoother, more stable)
+// Wi-Fi Configuration (Dynamic Captive Portal via WiFiManager)
+// The ESP32 will auto-connect to the last saved network.
+// If it fails, it will broadcast a hotspot named "SmartHome-Setup" for you to configure it.
 
+// =====================================================
+//  DOOR HINGE (BISAGRA) 360° CALIBRATION SETTINGS
+// =====================================================
+const int SERVO_STOP_SPEED    = 90;   // 90 = Complete Stop (Neutral / Electronic Brake)
+const int DOOR_OPEN_SPEED     = 130;  // Controlled Clockwise speed to swing door open (Push)
+const int DOOR_CLOSE_SPEED    = 60;   // Controlled Counter-Clockwise speed to pull door closed (Pull)
+
+// ⏱️ TUNING FOR YOUR PHYSICAL HINGE:
+// - Increase OPEN_TIME (e.g. 380) if door doesn't push open 90°
+// - Decrease OPEN_TIME (e.g. 260) if door swings too far
+// - Increase CLOSE_TIME (e.g. 300) if door doesn't fully reach frame
+// - Decrease CLOSE_TIME (e.g. 200) if it hits frame and strains
+const int DOOR_OPEN_TIME_MS   = 320;  // Milliseconds to swing door open 90 degrees
+const int DOOR_CLOSE_TIME_MS  = 250;  // Milliseconds to close door against hinge/frame
+
+// Sensor Thresholds
+const int   DEFAULT_GAS_LIMIT = 1800; // Safe threshold for 12-bit ADC (0-4095)
+const int   GAS_HYSTERESIS    = 100;  // Alarm release hysteresis
+const float DEFAULT_TEMP_LIMIT= 40.0; // Critical heat threshold (°C) - Retained at 40°C
+
+// =====================================================
+//  2. GLOBAL INSTANCES & STATE
+// =====================================================
 DHT dht(DHT_PIN, DHT_TYPE);
-Servo myServo;
+Servo doorServo;
 WebServer server(80);
 
-// ---------- State ----------
-float tempHigh = 45.0;             // alarm temperature (change in dashboard too)
-float tempOffset = 0.0;            // calibration: add/subtract °C to match a real thermometer
-float tBuf[5]; int tCount = 0, tIdx = 0;
-int   gasThreshold = 2000, gasValue = 0;
-float temp = NAN, hum = NAN;
+// Telemetry Values
+int   gasValue      = 0;
+int   gasThreshold  = DEFAULT_GAS_LIMIT;
+float currentTemp   = 24.5;
+float currentHum    = 50.0;
+float tempLimit     = DEFAULT_TEMP_LIMIT;
 
-bool gasAlarm = false, tempAlarm = false, testAlarm = false, muted = false;
-bool wasAlarm = false;
-bool servoManualOpen = false;
-bool servoAttached = false, servoMoving = false;
-int  servoPos = SERVO_MIN, servoDir = 1, lastTarget = SERVO_MIN;
-unsigned long lastServo = 0, lastDht = 0, servoMovedAt = 0;
-bool apMode = false;
-unsigned long gasAboveSince = 0;   // gas must stay above limit for a moment before alarm
+// State Flags
+bool isDoorLocked     = true;   // Current physical door state (true = Closed/Locked, false = Open/Unlocked)
+bool gasAlarmActive   = false;  // MQ-2 alarm trigger
+bool tempAlarmActive  = false;  // Heat alarm trigger
+bool manualAlarmTest  = false;  // Test button / command
+bool isMuted          = false;  // Mute siren flag
+bool isApModeActive   = false;  // Fallback hotspot active flag
+bool sensorWarmedUp   = false;  // 20s warm-up grace period flag
+
+// Timers
+unsigned long bootTime          = 0;
+unsigned long lastDhtReadTime   = 0;
+unsigned long lastSerialPrint   = 0;
+unsigned long gasSpikeStartTime = 0;
 
 // =====================================================
-//  DASHBOARD (served from the ESP32)
+//  3. HARDWARE CONTROL HELPERS
 // =====================================================
-const char PAGE[] = R"rawliteral(
+
+/**
+ * Tri-State High-Z Buzzer Driver:
+ * - turnOn = true  -> OUTPUT + LOW (Active-Low pulls to GND -> Full Loudness)
+ * - turnOn = false -> INPUT (Floating / High-Z -> Zero leakage current -> 100% Dead Silent)
+ */
+void setBuzzer(bool turnOn) {
+  if (turnOn) {
+    pinMode(BUZZER_PIN, OUTPUT);
+    digitalWrite(BUZZER_PIN, LOW); // Pulls PNP base to GND
+  } else {
+    pinMode(BUZZER_PIN, INPUT);    // High-impedance floating: completely disconnects base
+  }
+}
+
+/**
+ * Continuous Urgent Smoke Alarm / Siren Pattern:
+ * Fast, non-stop high-urgency emergency beeping:
+ * - [BEEP 180ms] --pause 120ms-- [BEEP 180ms] --pause 120ms-- (Continuous Non-Stop)
+ * - Tri-State High-Z driver guarantees 100% dead silence between pulses and when idle.
+ */
+void updateAlarmBuzzerPattern(bool isAlarming, unsigned long currentMillis) {
+  if (!isAlarming) {
+    setBuzzer(false);
+    return;
+  }
+
+  // 300ms continuous rapid emergency pulse cycle
+  unsigned long cycle = currentMillis % 300;
+  if (cycle < 180) {
+    setBuzzer(true);
+  } else {
+    setBuzzer(false);
+  }
+}
+
+/**
+ * Physical Door Hinge Controller for 360° Continuous Servo:
+ * - Spins for precise millisecond duration to open or close hinge.
+ * - Commands write(90) then immediately calls detach() to prevent slow creeping.
+ * - The internal high-ratio metal/nylon gears hold the stick/hinge firmly in place.
+ */
+void setDoorLock(bool lock) {
+  // Prevent jamming: don't move if door is already in that position
+  if (isDoorLocked == lock) {
+    Serial.println("🚪 [DOOR] Already in desired position. No movement needed.");
+    return;
+  }
+
+  isDoorLocked = lock;
+
+  // 1. Attach to GPIO 18
+  doorServo.attach(SERVO_PIN, 500, 2400);
+  delay(30);
+
+  if (!lock) {
+    // === OPEN DOOR (Push CW ~90°) ===
+    Serial.println("🚪 [DOOR] Opening Door (Clockwise)...");
+    doorServo.write(DOOR_OPEN_SPEED);
+    delay(DOOR_OPEN_TIME_MS);
+  } else {
+    // === CLOSE DOOR (Pull CCW ~90°) ===
+    Serial.println("🚪 [DOOR] Closing Door (Counter-Clockwise)...");
+    doorServo.write(DOOR_CLOSE_SPEED);
+    delay(DOOR_CLOSE_TIME_MS);
+  }
+
+  // 2. STOP & DETACH (Essential for 360° Servos to stop continuous creeping)
+  doorServo.write(SERVO_STOP_SPEED); // Neutral
+  delay(60);
+  doorServo.detach();                // Cut PWM pulses -> 0 creeping, 0 jitter, locked by gear train!
+
+  Serial.print("🚪 [DOOR] Motion complete -> Fixed Position: ");
+  Serial.println(lock ? "CLOSED / LOCKED" : "OPEN / UNLOCKED");
+}
+
+int readGasSensorAverage() {
+  long sum = 0;
+  for (int i = 0; i < 8; i++) {
+    sum += analogRead(MQ2_PIN);
+    delayMicroseconds(200);
+  }
+  return sum / 8;
+}
+
+int getWifiSignalStrengthPercent() {
+  if (WiFi.status() != WL_CONNECTED) return 0;
+  int rssi = WiFi.RSSI();
+  if (rssi <= -100) return 0;
+  if (rssi >= -50) return 100;
+  return 2 * (rssi + 100);
+}
+
+// =====================================================
+//  4. WEB DASHBOARD HTML
+// =====================================================
+const char PAGE_HTML[] PROGMEM = R"rawliteral(
 <!DOCTYPE html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Smart Home</title>
+<title>ESP32 Smart Home</title>
 <style>
 :root{--bg:#0f172a;--card:#1e293b;--tx:#e2e8f0;--mut:#94a3b8;--ok:#22c55e;--bad:#ef4444;--acc:#38bdf8}
-*{box-sizing:border-box}
-body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:16px}
-.wrap{max-width:720px;margin:auto}
-h1{font-size:20px;margin:0 0 12px;display:flex;justify-content:space-between;align-items:center}
-.pill{font-size:12px;padding:3px 10px;border-radius:99px;background:var(--card)}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:12px}
-.card{background:var(--card);border-radius:14px;padding:14px}
-.lbl{color:var(--mut);font-size:12px}
-.val{font-size:28px;font-weight:600;margin-top:4px}
-.sub{color:var(--mut);font-size:12px;margin-top:2px}
-.banner{border-radius:14px;padding:16px;text-align:center;font-weight:700;font-size:18px;margin-bottom:12px;background:var(--ok);color:#052e16}
-.banner.alarm{background:var(--bad);color:#fff;animation:b 1s infinite}
-@keyframes b{50%{opacity:.6}}
-button{background:var(--acc);color:#082f49;border:0;border-radius:10px;padding:10px 14px;font-weight:600;font-size:14px;cursor:pointer}
+*{box-sizing:border-box}body{margin:0;font-family:system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:16px}
+.wrap{max-width:600px;margin:auto}
+.card{background:var(--card);border-radius:14px;padding:16px;margin-bottom:12px;border:1px solid rgba(255,255,255,0.05)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.val{font-size:24px;font-weight:bold;margin-top:4px}
+.lbl{font-size:12px;color:var(--mut)}
+.banner{padding:14px;border-radius:10px;text-align:center;font-weight:bold;margin-bottom:12px;background:rgba(34,197,94,0.15);color:var(--ok)}
+.banner.alarm{background:rgba(239,68,68,0.25);color:var(--bad);animation:p 1s infinite}
+@keyframes p{50%{opacity:0.6}}
+button{background:var(--acc);color:#082f49;border:0;border-radius:8px;padding:10px 14px;font-weight:bold;cursor:pointer;margin:4px}
 button.alt{background:#334155;color:var(--tx)}
-.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;align-items:center}
-input{width:90px;padding:8px;border-radius:8px;border:1px solid #334155;background:#0f172a;color:var(--tx)}
-canvas{width:100%;height:80px;display:block;margin-top:6px}
+button.danger{background:var(--bad);color:#fff}
 </style></head><body><div class="wrap">
-<h1>🏠 Smart Home <span class="pill" id="conn">connecting...</span></h1>
-
-<div class="banner" id="banner">✅ All normal</div>
+<h2>🏠 ESP32 Smart Home Controller</h2>
+<div class="banner" id="banner">✅ System Normal</div>
 
 <div class="grid">
-  <div class="card"><div class="lbl">🌡 Temperature</div><div class="val" id="temp">--</div><div class="sub" id="tlim"></div></div>
-  <div class="card"><div class="lbl">💧 Humidity</div><div class="val" id="hum">--</div></div>
-  <div class="card"><div class="lbl">🔥 Gas level</div><div class="val" id="gas">--</div><div class="sub" id="glim"></div></div>
-  <div class="card"><div class="lbl">🪟 Vent / Door</div><div class="val" id="servo">--</div></div>
+  <div class="card"><div class="lbl">DOOR POSITION</div><div class="val" id="door">--</div></div>
+  <div class="card"><div class="lbl">SMOKE / GAS (MQ-2)</div><div class="val" id="gas">--</div></div>
+  <div class="card"><div class="lbl">TEMPERATURE</div><div class="val" id="temp">--</div></div>
+  <div class="card"><div class="lbl">HUMIDITY</div><div class="val" id="hum">--</div></div>
 </div>
 
-<div class="card" style="margin-bottom:12px">
-  <div class="lbl">Controls</div>
-  <div class="row">
-    <button onclick="send('servo=open')">Open vent</button>
-    <button class="alt" onclick="send('servo=close')">Close vent</button>
-  </div>
-  <div class="row">
-    <button onclick="send('alarm=on')">Test alarm ON</button>
-    <button class="alt" onclick="send('alarm=off')">Alarm OFF</button>
-    <button class="alt" id="muteBtn" onclick="toggleMute()">Mute buzzer</button>
-  </div>
+<div class="card">
+  <div class="lbl">DOOR MECHANISM CONTROLS</div>
+  <button onclick="sendDoor('unlock')">🔓 Open Door (90° Clockwise)</button>
+  <button class="alt" onclick="sendDoor('lock')">🔒 Close Door (90° Counter-Clockwise)</button>
 </div>
 
-<div class="card" style="margin-bottom:12px">
-  <div class="lbl">Settings</div>
-  <div class="row">Temp limit (°C) <input id="tIn" type="number" step="0.5"><button onclick="send('tempLimit='+tIn.value)">Save</button></div>
-  <div class="row">Gas limit (0-4095) <input id="gIn" type="number"><button onclick="send('gasLimit='+gIn.value)">Save</button></div>
-  <div class="row">Temp calibration (°C, + or -) <input id="oIn" type="number" step="0.5"><button onclick="send('tempOffset='+oIn.value)">Save</button></div>
+<div class="card">
+  <div class="lbl">ALARM & SIREN CONTROLS</div>
+  <button class="danger" onclick="sendControl('alarm=on')">🚨 Test Siren</button>
+  <button class="alt" onclick="sendControl('alarm=off')">Reset Alarm</button>
+  <button class="alt" id="muteBtn" onclick="toggleMute()">Mute Buzzer</button>
 </div>
-
-<div class="card" style="margin-bottom:12px"><div class="lbl">Temperature history</div><canvas id="c1"></canvas></div>
-<div class="card"><div class="lbl">Gas history</div><canvas id="c2"></canvas></div>
 </div>
 
 <script>
 const $=id=>document.getElementById(id);
-const tH=[],gH=[];let muted=false,filled=false;
-function draw(c,a,col){
-  const x=c.getContext('2d'),w=c.width=c.clientWidth*2,h=c.height=160;
-  x.clearRect(0,0,w,h); if(a.length<2)return;
-  const mn=Math.min(...a),mx=Math.max(...a),r=(mx-mn)||1;
-  x.strokeStyle=col;x.lineWidth=3;x.beginPath();
-  a.forEach((v,i)=>{const px=i/(a.length-1)*w,py=h-10-((v-mn)/r)*(h-20);i?x.lineTo(px,py):x.moveTo(px,py)});
-  x.stroke();
-}
-async function load(){
+let muted=false;
+async function update(){
   try{
-    const d=await (await fetch('/status')).json();
-    $('conn').textContent='🟢 Online ('+d.mode+')';
-    $('temp').textContent=d.temp===null?'--':d.temp+' °C';
-    $('hum').textContent=d.hum===null?'--':d.hum+' %';
-    $('gas').textContent=d.gas;
-    $('tlim').textContent='limit '+d.tempLimit+' °C';
-    $('glim').textContent='limit '+d.gasThreshold;
-    $('servo').textContent=d.servoOpen?'Open':'Closed';
-    const b=$('banner');
-    if(d.alarm){
-      let why=[];if(d.gasAlarm)why.push('GAS');if(d.tempAlarm)why.push('HEAT');if(d.testAlarm)why.push('TEST');
-      b.className='banner alarm';b.textContent='⚠ ALARM: '+why.join(' + ');
-    }else{b.className='banner';b.textContent='✅ All normal';}
-    muted=d.muted;$('muteBtn').textContent=muted?'Unmute buzzer':'Mute buzzer';
-    if(!filled){$('tIn').value=d.tempLimit;$('gIn').value=d.gasThreshold;$('oIn').value=d.tempOffset;filled=true;}
-    if(d.temp!==null){tH.push(d.temp);if(tH.length>60)tH.shift();}
-    gH.push(d.gas);if(gH.length>60)gH.shift();
-    draw($('c1'),tH,'#f97316');draw($('c2'),gH,'#38bdf8');
-  }catch(e){$('conn').textContent='🔴 Offline';}
+    const d = await (await fetch('/api/status')).json();
+    $('door').textContent = d.isLocked ? '🔒 LOCKED' : '🔓 UNLOCKED';
+    $('door').style.color = d.isLocked ? '#22c55e' : '#f59e0b';
+    $('gas').textContent = d.gasValue + ' / ' + d.gasThreshold;
+    $('temp').textContent = d.temperature + ' °C';
+    $('hum').textContent = d.humidity + ' %';
+    const b = $('banner');
+    if(d.isAlarming){
+      b.className='banner alarm';
+      b.textContent = '🚨 EMERGENCY ALARM ACTIVE!';
+    } else {
+      b.className='banner';
+      b.textContent = '✅ System Normal & Secure';
+    }
+    muted=d.muted;
+    $('muteBtn').textContent = muted ? 'Unmute Buzzer' : 'Mute Buzzer';
+  }catch(e){}
 }
-async function send(q){try{await fetch('/control?'+q);}catch(e){} load();}
-function toggleMute(){send('mute='+(muted?'0':'1'));}
-setInterval(load,2000);load();
+async function sendDoor(act){
+  await fetch('/api/door', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:act})
+  });
+  update();
+}
+async function sendControl(q){
+  await fetch('/control?'+q);
+  update();
+}
+function toggleMute(){ sendControl('mute='+(muted?'0':'1')); }
+setInterval(update, 2000); update();
 </script></body></html>
 )rawliteral";
 
 // =====================================================
-//  HELPERS
+//  5. REST API ROUTE HANDLERS (WITH FULL CORS)
 // =====================================================
-void buzzer(bool on) { digitalWrite(BUZZER_PIN, BUZZER_ACTIVE_LOW ? !on : on); }
-
-int readGas() {
-  long sum = 0;
-  for (int i = 0; i < 5; i++) { sum += analogRead(MQ2_PIN); delayMicroseconds(300); }
-  return sum / 5;
-}
-
-void servoAttachIfNeeded() {
-  if (!servoAttached) {
-    myServo.setPeriodHertz(50);
-    myServo.attach(SERVO_PIN, 500, 2400);
-    servoAttached = true;
-  }
-}
-
-void waitWithServer(unsigned long ms) {
-  unsigned long t0 = millis();
-  while (millis() - t0 < ms) { server.handleClient(); delay(5); }
-}
-
-// =====================================================
-//  WEB HANDLERS
-// =====================================================
-void sendJson(int code, const String& body) {
+void sendCorsHeaders() {
   server.sendHeader("Access-Control-Allow-Origin", "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type");
-  server.send(code, "application/json", body);
+  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, apikey");
 }
 
-void handleRoot() { server.send(200, "text/html", PAGE); }
+void sendJson(int code, const String& jsonStr) {
+  sendCorsHeaders();
+  server.send(code, "application/json", jsonStr);
+}
 
-void handleStatus() {
-  bool alarm = gasAlarm || tempAlarm || testAlarm;
+void handleStatusApi() {
+  bool isAlarming = gasAlarmActive || tempAlarmActive || manualAlarmTest;
+  int wifiStrength = getWifiSignalStrengthPercent();
+  unsigned long uptime = (millis() - bootTime) / 1000;
+
   String j = "{";
-  j += "\"temp\":" + (isnan(temp) ? String("null") : String(temp, 1)) + ",";
-  j += "\"hum\":"  + (isnan(hum)  ? String("null") : String(hum, 1))  + ",";
-  j += "\"gas\":" + String(gasValue) + ",";
+  j += "\"deviceId\":\"ESP32-SmartHome-01\",";
+  j += "\"macAddress\":\"" + WiFi.macAddress() + "\",";
+  j += "\"ipAddress\":\"" + (isApModeActive ? "192.168.4.1" : WiFi.localIP().toString()) + "\",";
+  j += "\"isLocked\":" + String(isDoorLocked ? "true" : "false") + ",";
+  j += "\"temperature\":" + String(currentTemp, 1) + ",";
+  j += "\"humidity\":" + String(currentHum, 1) + ",";
+  j += "\"smokeActive\":" + String(gasAlarmActive ? "true" : "false") + ",";
+  j += "\"isAlarming\":" + String(isAlarming ? "true" : "false") + ",";
+  j += "\"signalStrength\":" + String(wifiStrength) + ",";
+  j += "\"uptimeSeconds\":" + String(uptime) + ",";
+  j += "\"gasValue\":" + String(gasValue) + ",";
   j += "\"gasThreshold\":" + String(gasThreshold) + ",";
-  j += "\"tempLimit\":" + String(tempHigh, 1) + ",";
-  j += "\"tempOffset\":" + String(tempOffset, 1) + ",";
-  j += "\"gasAlarm\":"  + String(gasAlarm  ? "true" : "false") + ",";
-  j += "\"tempAlarm\":" + String(tempAlarm ? "true" : "false") + ",";
-  j += "\"testAlarm\":" + String(testAlarm ? "true" : "false") + ",";
-  j += "\"alarm\":"     + String(alarm     ? "true" : "false") + ",";
-  j += "\"muted\":"     + String(muted     ? "true" : "false") + ",";
-  j += "\"servoOpen\":" + String(servoManualOpen ? "true" : "false") + ",";
-  j += "\"mode\":\"" + String(apMode ? "hotspot" : "wifi") + "\"";
+  j += "\"tempLimit\":" + String(tempLimit, 1) + ",";
+  j += "\"muted\":" + String(isMuted ? "true" : "false") + ",";
+  j += "\"mode\":\"" + String(isApModeActive ? "hotspot" : "wifi") + "\"";
   j += "}";
+
   sendJson(200, j);
 }
 
-void handleControl() {
-  if (server.hasArg("alarm"))  testAlarm = (server.arg("alarm") == "on");
-  if (server.hasArg("mute"))   muted = (server.arg("mute") == "1");
-  if (server.hasArg("servo"))  servoManualOpen = (server.arg("servo") == "open");
-  if (server.hasArg("tempLimit")) {
-    float v = server.arg("tempLimit").toFloat();
-    if (v >= 10 && v <= 80) tempHigh = v;
+void handleDoorApi() {
+  String action = "";
+  if (server.hasArg("plain")) {
+    String body = server.arg("plain");
+    if (body.indexOf("unlock") != -1 || body.indexOf("open") != -1) action = "unlock";
+    else if (body.indexOf("lock") != -1 || body.indexOf("close") != -1) action = "lock";
   }
-  if (server.hasArg("tempOffset")) {
-    float v = server.arg("tempOffset").toFloat();
-    if (v >= -15 && v <= 15) {
-      // keep the displayed temperature continuous when the offset changes
-      if (!isnan(temp)) temp += (v - tempOffset);
-      tempOffset = v;
-    }
+  if (server.hasArg("action")) action = server.arg("action");
+  if (server.hasArg("servo"))  action = (server.arg("servo") == "open") ? "unlock" : "lock";
+
+  if (action == "unlock" || action == "open") {
+    setDoorLock(false); // Rotate Clockwise 90° & Stop
+    sendJson(200, "{\"success\":true,\"isLocked\":false,\"message\":\"Door Opened (90° CW)\"}");
+  } else if (action == "lock" || action == "close") {
+    setDoorLock(true);  // Rotate Counter-Clockwise 90° & Stop
+    sendJson(200, "{\"success\":true,\"isLocked\":true,\"message\":\"Door Closed (90° CCW)\"}");
+  } else {
+    // Toggle
+    setDoorLock(!isDoorLocked);
+    sendJson(200, "{\"success\":true,\"isLocked\":" + String(isDoorLocked ? "true" : "false") + "}");
   }
-  if (server.hasArg("gasLimit")) {
-    int v = server.arg("gasLimit").toInt();
-    if (v >= 100 && v <= 4095) gasThreshold = v;
-  }
-  sendJson(200, "{\"ok\":true}");
 }
 
-void handleNotFound() {
-  if (server.method() == HTTP_OPTIONS) { sendJson(204, ""); return; }
-  sendJson(404, "{\"error\":\"not found\"}");
+void handleResetAlarmApi() {
+  manualAlarmTest = false;
+  isMuted = true;
+  setBuzzer(false);
+  Serial.println("🔇 [ALARM] Siren reset/muted via API");
+  sendJson(200, "{\"success\":true,\"message\":\"Alarm reset successfully\"}");
+}
+
+void handleControlApi() {
+  if (server.hasArg("alarm")) manualAlarmTest = (server.arg("alarm") == "on");
+  if (server.hasArg("mute"))  isMuted = (server.arg("mute") == "1");
+  if (server.hasArg("servo")) setDoorLock(server.arg("servo") == "close");
+  sendJson(200, "{\"ok\":true,\"isLocked\":" + String(isDoorLocked ? "true" : "false") + "}");
 }
 
 // =====================================================
-//  SETUP
+//  6. SETUP (HARDWARE INITIALIZATION)
 // =====================================================
 void setup() {
   Serial.begin(115200);
-  pinMode(BUZZER_PIN, OUTPUT);
-  buzzer(false);
+  bootTime = millis();
 
+  Serial.println("\n\n================================================");
+  Serial.println("   🏠 ESP32 SMART HOME CONTROLLER INITIALIZING  ");
+  Serial.println("================================================");
+
+  // 1. Initialize Buzzer & Status LED immediately
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, HIGH); // Turn on Blue LED to indicate power
+  setBuzzer(false);            // High-Z Floating mode: completely turns OFF buzzer humming!
+
+  // 2. Configure ADC for MQ-2 Analog Reading
   analogReadResolution(12);
-  analogSetPinAttenuation(MQ2_PIN, ADC_11db);
+  analogSetPinAttenuation(MQ2_PIN, ADC_11db); // 0V - 3.3V full range
+
+  // 3. Initialize DHT Sensor
   dht.begin();
 
-  // ----- Wi-Fi -----
-  WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("Connecting to Wi-Fi");
-  unsigned long t0 = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - t0 < 15000) { delay(500); Serial.print("."); }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Connected! Open on your phone/PC:  http://");
-    Serial.println(WiFi.localIP());
-  } else {
-    apMode = true;
-    WiFi.mode(WIFI_AP);
-    WiFi.softAP("SmartHome-ESP32", "12345678");
-    Serial.println("Wi-Fi failed -> hotspot mode.");
-    Serial.println("Connect to Wi-Fi 'SmartHome-ESP32' (password 12345678)");
-    Serial.println("then open  http://192.168.4.1");
-  }
-
-  if (MDNS.begin("smarthome")) Serial.println("Also try: http://smarthome.local");
-
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/status", HTTP_GET, handleStatus);
-  server.on("/control", HTTP_GET, handleControl);
-  server.onNotFound(handleNotFound);
-  server.begin();
-
-  // ----- Startup test: servo + buzzer -----
+  // 4. Initialize Servo Timers & Keep Completely Still at Startup (Zero continuous spin)
+  Serial.println("🚪 [SERVO] Initializing 360° Servo Timers on GPIO 18...");
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
-  servoAttachIfNeeded();
-  buzzer(false);                           // buzzer stays silent at startup
-  myServo.write(SERVO_MIN); delay(400);
-  myServo.write(SERVO_MAX); delay(600);    // quick servo check only
-  myServo.write(SERVO_MIN); delay(600);
-  myServo.detach(); servoAttached = false;
+  ESP32PWM::allocateTimer(2);
+  ESP32PWM::allocateTimer(3);
 
-  // ----- MQ2 warm-up + calibration -----
-  Serial.println("MQ2 warming up...");
-  waitWithServer(WARMUP_MS);
+  doorServo.setPeriodHertz(50);
+  doorServo.attach(SERVO_PIN, 500, 2400);
+  doorServo.write(SERVO_STOP_SPEED); // 90 = Neutral Stop
+  delay(100);
+  doorServo.detach();                // 100% still on boot (no slow creeping)
+  isDoorLocked = true;
+  Serial.println("🚪 [SERVO] 360° Servo Initialized & Detached (0° Locked Position).\n");
 
-  if (MANUAL_GAS_LIMIT > 0) {
-    gasThreshold = MANUAL_GAS_LIMIT;
+  // 5. Connect to Wi-Fi dynamically using WiFiManager
+  WiFi.setSleep(false);
+  WiFiManager wm;
+  
+  Serial.println("📶 Checking for saved Wi-Fi credentials...");
+  
+  // wm.resetSettings(); // UNCOMMENT to wipe saved Wi-Fi credentials for testing
+  
+  // This connects to the last saved router.
+  // If it fails or is new, it broadcasts hotspot "SmartHome-Setup" (password: 12345678)
+  bool connected = wm.autoConnect("SmartHome-Setup", "12345678");
+
+  if (connected) {
+    isApModeActive = false;
+    digitalWrite(LED_PIN, HIGH);
+    Serial.print("🟢 Wi-Fi Connected dynamically! IP Address: http://");
+    Serial.println(WiFi.localIP());
   } else {
-    long sum = 0;
-    for (int i = 0; i < 30; i++) { sum += readGas(); waitWithServer(100); }
-    int baseline = sum / 30;
-    gasThreshold = baseline + GAS_MARGIN;
-    Serial.print("Clean-air baseline: "); Serial.println(baseline);
+    isApModeActive = true;
+    digitalWrite(LED_PIN, HIGH);
+    Serial.println("⚠️ Wi-Fi Setup Portal closed without connecting. Rebooting to retry...");
+    delay(3000);
+    ESP.restart();
   }
-  Serial.print("Gas limit: "); Serial.println(gasThreshold);
-  Serial.println("System ready.");
+
+  if (MDNS.begin("smarthome")) {
+    Serial.println("mDNS Responder: http://smarthome.local");
+  }
+
+  // 6. Register Web Server Routes
+  server.on("/", HTTP_GET, []() { server.send(200, "text/html", PAGE_HTML); });
+  server.on("/api/status", HTTP_GET, handleStatusApi);
+  server.on("/status", HTTP_GET, handleStatusApi);
+  server.on("/api/door", HTTP_POST, handleDoorApi);
+  server.on("/api/door", HTTP_GET, handleDoorApi);
+  server.on("/api/reset-alarm", HTTP_POST, handleResetAlarmApi);
+  server.on("/api/reset-alarm", HTTP_GET, handleResetAlarmApi);
+  server.on("/control", HTTP_GET, handleControlApi);
+
+  // CORS Preflight Handlers
+  server.on("/api/status", HTTP_OPTIONS, []() { sendCorsHeaders(); server.send(204); });
+  server.on("/status", HTTP_OPTIONS, []() { sendCorsHeaders(); server.send(204); });
+  server.on("/api/door", HTTP_OPTIONS, []() { sendCorsHeaders(); server.send(204); });
+  server.on("/api/reset-alarm", HTTP_OPTIONS, []() { sendCorsHeaders(); server.send(204); });
+  server.on("/control", HTTP_OPTIONS, []() { sendCorsHeaders(); server.send(204); });
+
+  server.begin();
+  Serial.println("🌐 HTTP Web Server & REST API Ready.");
+
+  Serial.println("\n💡 SERIAL DEBUG COMMANDS (Type in Serial Monitor at 115200 baud):");
+  Serial.println(" - 'unlock' or 'open'  -> Rotates Clockwise ~90° and STOPS (Open door)");
+  Serial.println(" - 'lock' or 'close'   -> Rotates Counter-Clockwise ~90° and STOPS (Close door)");
+  Serial.println(" - 'buzz'              -> Test buzzer for 500ms");
+  Serial.println(" - 'status'            -> Print all sensor readings");
+  Serial.println("================================================\n");
 }
 
 // =====================================================
-//  LOOP
+//  7. MAIN LOOP (TELEMETRY & SAFETY PROTOCOLS)
 // =====================================================
 void loop() {
   server.handleClient();
   unsigned long now = millis();
 
-  // ----- Gas -----
-  gasValue = readGas();
-  if (gasValue >= gasThreshold) { if (gasAboveSince == 0) gasAboveSince = now; }
-  else gasAboveSince = 0;
-  if (!gasAlarm && gasAboveSince != 0 && now - gasAboveSince >= 500) gasAlarm = true;   // must stay high 0.5 s
-  else if (gasAlarm && gasValue < gasThreshold - GAS_HYST) gasAlarm = false;
+  // ----- 1. Serial Monitor Command Listener -----
+  if (Serial.available() > 0) {
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    cmd.toLowerCase();
 
-  // ----- Temperature / humidity -----
-  if (now - lastDht >= 2000) {
-    lastDht = now;
+    if (cmd == "unlock" || cmd == "open") {
+      setDoorLock(false); // Rotates CW 90° & STOPS
+    } else if (cmd == "lock" || cmd == "close") {
+      setDoorLock(true);  // Rotates CCW 90° & STOPS
+    } else if (cmd == "buzz") {
+      Serial.println("🔊 Testing Continuous Urgent Beep Pattern...");
+      for (int i = 0; i < 5; i++) {
+        setBuzzer(true);
+        delay(180);
+        setBuzzer(false);
+        delay(120);
+      }
+    } else if (cmd == "status") {
+      Serial.print("📋 Status -> Temp: "); Serial.print(currentTemp);
+      Serial.print("°C | Hum: "); Serial.print(currentHum);
+      Serial.print("% | Gas: "); Serial.print(gasValue);
+      Serial.print(" (Limit: "); Serial.print(gasThreshold);
+      Serial.print(") | Door: "); Serial.println(isDoorLocked ? "LOCKED" : "UNLOCKED");
+    }
+  }
+
+  // ----- 2. MQ-2 Sensor Grace Period & Reading -----
+  gasValue = readGasSensorAverage();
+
+  // Give sensor 20 seconds to warm up after boot before arming alarm
+  if (!sensorWarmedUp && (now - bootTime >= 20000)) {
+    sensorWarmedUp = true;
+    Serial.println("🔥 [MQ-2] Sensor warm-up complete. Gas alarm is now ARMED.");
+  }
+
+  if (sensorWarmedUp) {
+    if (gasValue >= gasThreshold) {
+      if (gasSpikeStartTime == 0) gasSpikeStartTime = now;
+    } else {
+      gasSpikeStartTime = 0;
+    }
+
+    // Must persist for 400ms before alarming to avoid noisy ADC spikes
+    if (!gasAlarmActive && gasSpikeStartTime != 0 && (now - gasSpikeStartTime >= 400)) {
+      gasAlarmActive = true;
+      Serial.println("🚨 [ALARM] MQ-2 Smoke/Gas Spike Detected!");
+    } else if (gasAlarmActive && gasValue < (gasThreshold - GAS_HYSTERESIS)) {
+      gasAlarmActive = false;
+      Serial.println("✅ [CLEARED] MQ-2 Gas levels normalized.");
+    }
+  }
+
+  // ----- 3. Read DHT Temperature & Humidity -----
+  if (now - lastDhtReadTime >= 2000) {
+    lastDhtReadTime = now;
     float t = dht.readTemperature();
     float h = dht.readHumidity();
+
     if (!isnan(t) && !isnan(h)) {
-      tBuf[tIdx] = t;
-      tIdx = (tIdx + 1) % T_SAMPLES;
-      if (tCount < T_SAMPLES) tCount++;
-      float s = 0;
-      for (int i = 0; i < tCount; i++) s += tBuf[i];
-      temp = (s / tCount) + tempOffset;      // average of last readings + calibration
-      hum  = h;
-    }
-  }
-  if (!isnan(temp)) {
-    if (!tempAlarm && temp >= tempHigh) tempAlarm = true;
-    else if (tempAlarm && temp <= tempHigh - TEMP_HYST) tempAlarm = false;
-  }
-
-  bool alarm = gasAlarm || tempAlarm || testAlarm;
-
-  // ----- Alarm ended: un-mute for next time -----
-  if (!alarm && wasAlarm) muted = false;
-
-  // ----- Buzzer -----
-  buzzer(alarm && !muted);
-
-  // ----- Servo -----
-  if (alarm) {
-    servoAttachIfNeeded();
-    servoMoving = false;
-    if (!wasAlarm) {                       // open instantly on detection
-      servoPos = SERVO_MAX; servoDir = -1;
-      myServo.write(SERVO_MAX); lastServo = now;
-    }
-    if (SERVO_SWEEP_ON_ALARM) {
-      if (now - lastServo >= SERVO_INTERVAL) {
-        lastServo = now;
-        servoPos += servoDir * SERVO_STEP;
-        if (servoPos >= SERVO_MAX) { servoPos = SERVO_MAX; servoDir = -1; }
-        if (servoPos <= SERVO_MIN) { servoPos = SERVO_MIN; servoDir = 1; }
-        myServo.write(servoPos);
-      }
-    } else {
-      // hold the servo fully OPEN for as long as the alarm lasts
-      if (now - lastServo >= 200) { lastServo = now; myServo.write(SERVO_MAX); }
-    }
-    lastTarget = -1;                       // force re-position after alarm
-  } else {
-    // follow the manual open/close button, then detach so it stays quiet
-    int target = servoManualOpen ? SERVO_MAX : SERVO_MIN;
-    if (target != lastTarget) {
-      servoAttachIfNeeded();
-      myServo.write(target);
-      lastTarget = target;
-      servoPos = target;
-      servoMoving = true;
-      servoMovedAt = now;
-    }
-    if (servoAttached && servoMoving && now - servoMovedAt > 800) {
-      myServo.detach();
-      servoAttached = false;
-      servoMoving = false;
+      currentTemp = t;
+      currentHum  = h;
     }
   }
 
-  wasAlarm = alarm;
+  // Extreme Heat Threshold Check (≥ 40°C as requested)
+  if (!tempAlarmActive && currentTemp >= tempLimit) {
+    tempAlarmActive = true;
+    Serial.println("🚨 [ALARM] Critical High Heat (≥ 40°C) Detected!");
+  } else if (tempAlarmActive && currentTemp <= (tempLimit - 2.0)) {
+    tempAlarmActive = false;
+  }
 
-  // ----- Debug line every second (Serial Monitor, 115200) -----
-  static unsigned long lastPrint = 0;
-  if (now - lastPrint >= 1000) {
-    lastPrint = now;
-    Serial.print("Gas: ");  Serial.print(gasValue);
-    Serial.print(" (limit "); Serial.print(gasThreshold);
-    Serial.print(") | Temp: "); Serial.print(temp);
-    Serial.print(" C | Hum: "); Serial.print(hum);
-    Serial.print(" % | ");
-    if (alarm) {
-      Serial.print("ALARM ->");
-      if (gasAlarm)  Serial.print(" GAS");
-      if (tempAlarm) Serial.print(" HEAT");
-      if (testAlarm) Serial.print(" TEST");
-      Serial.println();
-    } else {
-      Serial.println("Normal");
+  bool isAlarming = gasAlarmActive || tempAlarmActive || manualAlarmTest;
+
+  // ----- 4. Smoke Alarm Pulsed Siren Actuation (Beep-Beep Pattern) -----
+  updateAlarmBuzzerPattern(isAlarming && !isMuted, now);
+
+  // ----- 5. Emergency Auto-Unlock Failsafe -----
+  if (isAlarming && isDoorLocked) {
+    Serial.println("🔓 [FAILSAFE] Auto-Unlocking door (Rotating Clockwise 90° & STOPPING) due to Hazard!");
+    setDoorLock(false); // Rotates CW 90° & STOPS
+  }
+
+  // ----- 6. Diagnostics Print to Serial Monitor Every 2s -----
+  if (now - lastSerialPrint >= 2000) {
+    lastSerialPrint = now;
+    Serial.print("[DIAG] Temp: ");
+    Serial.print(currentTemp, 1);
+    Serial.print("°C (Limit: ");
+    Serial.print(tempLimit, 1);
+    Serial.print("°C) | Hum: ");
+    Serial.print(currentHum, 1);
+    Serial.print("% | MQ-2 Gas: ");
+    Serial.print(gasValue);
+    Serial.print(" / ");
+    Serial.print(gasThreshold);
+    Serial.print(sensorWarmedUp ? " [ARMED]" : " [WARMING UP...]");
+    Serial.print(" | Door: ");
+    Serial.print(isDoorLocked ? "LOCKED" : "UNLOCKED");
+    if (isAlarming) {
+      Serial.print(" | 🚨 ALARM ACTIVE!");
     }
+    Serial.println();
   }
 }
-`
