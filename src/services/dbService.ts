@@ -29,80 +29,15 @@ const DEFAULT_ADMIN: Account = {
   id: 'acc-admin-01',
   username: 'admin',
   email: 'admin@smarthome.local',
-  passwordHash: 'password123', // Standard initial password for testing
-  doorPasskeyHash: '1234',      // Default 4-digit PIN for door lock/unlock
+  passwordHash: 'password123',
+  doorPasskeyHash: '',
   status: 'active',
   createdAt: new Date().toISOString()
 };
 
-const DEFAULT_DEVICES: Device[] = [
-  {
-    id: 'dev-door-01',
-    macAddress: 'B8:27:EB:44:11:01',
-    name: 'Front Main Entrance Lock',
-    deviceType: 'door_lock',
-    roomLocation: 'Main Entrance',
-    ipAddress: '192.168.1.101',
-    status: 'active',
-    signalStrength: 98,
-    batteryLevel: 92,
-    lastSeenAt: new Date().toISOString(),
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'dev-climate-01',
-    macAddress: 'B8:27:EB:44:11:02',
-    name: 'Living Room Climate Sensor (DHT22)',
-    deviceType: 'climate_sensor',
-    roomLocation: 'Living Room',
-    ipAddress: '192.168.1.102',
-    status: 'active',
-    signalStrength: 95,
-    batteryLevel: 88,
-    lastSeenAt: new Date().toISOString(),
-    createdAt: new Date().toISOString()
-  },
-  {
-    id: 'dev-smoke-01',
-    macAddress: 'B8:27:EB:44:11:03',
-    name: 'Kitchen Smoke & Gas Detector (MQ-2)',
-    deviceType: 'smoke_detector',
-    roomLocation: 'Kitchen',
-    ipAddress: '192.168.1.103',
-    status: 'active',
-    signalStrength: 91,
-    batteryLevel: 97,
-    lastSeenAt: new Date().toISOString(),
-    createdAt: new Date().toISOString()
-  }
-];
+const DEFAULT_DEVICES: Device[] = [];
 
-const INITIAL_LOGS: ActivityLog[] = [
-  {
-    id: 1,
-    actorName: 'System Boot',
-    eventCategory: 'SYSTEM',
-    actionDescription: 'Smart Home Gateway initialized with 3 active devices',
-    statusResult: 'SUCCESS',
-    createdAt: new Date(Date.now() - 3600000).toLocaleTimeString()
-  },
-  {
-    id: 2,
-    actorName: 'admin',
-    eventCategory: 'AUTH',
-    actionDescription: 'Administrator logged into mobile app',
-    statusResult: 'SUCCESS',
-    createdAt: new Date(Date.now() - 1800000).toLocaleTimeString()
-  },
-  {
-    id: 3,
-    actorName: 'Front Door Lock',
-    eventCategory: 'DOOR',
-    actionDescription: 'Door locked via primary schedule',
-    statusResult: 'SUCCESS',
-    createdAt: new Date(Date.now() - 900000).toLocaleTimeString()
-  }
-];
+const INITIAL_LOGS: ActivityLog[] = [];
 
 // Helper generator for starter devices for a specific account
 const createStarterDevices = (ownerAccountId: string): Device[] => [
@@ -294,6 +229,70 @@ class DatabaseService {
     return { success: true };
   }
 
+  async sendPasswordResetOtp(email: string): Promise<{ success: boolean; message?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const accounts = this.getAccounts();
+    const account = accounts.find(a => a.email && a.email.toLowerCase() === cleanEmail);
+
+    if (!account) {
+      return { success: false, message: 'No account found with that email address.' };
+    }
+
+    // Generate random 6-digit numeric OTP
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpData: PendingOtpData = {
+      code,
+      expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes expiry
+      username: account.username
+    };
+
+    const pendingMap = this.getItem<Record<string, PendingOtpData>>('pending_otps', {});
+    pendingMap[cleanEmail] = otpData;
+    this.setItem('pending_otps', pendingMap);
+
+    const emailResult = await emailService.sendOtpEmail(cleanEmail, account.username, code);
+
+    if (emailResult.success) {
+      this.logActivity(account.username, 'AUTH', `Password reset OTP dispatched to ${cleanEmail}`, 'SUCCESS');
+      return { success: true };
+    } else {
+      if (emailResult.error && (emailResult.error.includes('testing emails to your own email address') || emailResult.error.includes('validation_error'))) {
+        return { success: true, message: `[Sandbox] Password Reset OTP is: ${code}` };
+      }
+      return { success: false, message: `Failed to send email: ${emailResult.error}` };
+    }
+  }
+
+  async resetPasswordWithOtp(email: string, enteredCode: string, newPassword: string): Promise<{ success: boolean; message?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanCode = enteredCode.trim();
+    
+    // Verify OTP
+    const verifyResult = this.verifySignupOtp(cleanEmail, cleanCode);
+    if (!verifyResult.success) {
+      return verifyResult;
+    }
+
+    // Update password
+    const accounts = this.getAccounts();
+    const accountIndex = accounts.findIndex(a => a.email && a.email.toLowerCase() === cleanEmail);
+    if (accountIndex === -1) {
+      return { success: false, message: 'Account not found.' };
+    }
+
+    const hashedPw = await hashString(newPassword);
+    accounts[accountIndex].passwordHash = hashedPw;
+    this.setItem('accounts', accounts);
+    
+    // Attempt cloud update if configured
+    try {
+      await supabaseApi.updatePassword(accounts[accountIndex].id, hashedPw);
+    } catch (e) {}
+
+    this.logActivity(accounts[accountIndex].username, 'AUTH', 'Password successfully reset via OTP', 'SUCCESS');
+    return { success: true };
+  }
+
   async authenticate(identifier: string, password: string): Promise<{ success: boolean; account?: Account; message?: string }> {
     const cleanId = identifier.trim().toLowerCase();
     const accounts = this.getAccounts();
@@ -348,7 +347,7 @@ class DatabaseService {
     const cleanUsername = params.username.trim();
     const cleanEmail = params.email.trim().toLowerCase();
     const cleanPass = params.password.trim();
-    const cleanPin = params.doorPasskey?.trim() || '1234';
+    const cleanPin = params.doorPasskey?.trim() || '';
 
     if (!cleanUsername || cleanUsername.length < 3) {
       return { success: false, message: 'Username must be at least 3 characters.' };
@@ -386,10 +385,9 @@ class DatabaseService {
     this.setItem('accounts', updatedAccounts);
     this.setItem('current_session', newAccount);
 
-    // Auto-provision devices for this account
-    const existingDevices = this.getDevices();
-    const newDevices = createStarterDevices(newAccountId);
-    this.setItem('devices', [...existingDevices, ...newDevices]);
+    // New accounts start with exactly zero registered devices.
+    // Devices will only be populated when the ESP32 is fetched via Wi-Fi, 
+    // or if Simulation Mode is manually toggled ON by a developer.
 
     // Record activity
     this.logActivity(cleanUsername, 'AUTH', `New account created & email verified for "${cleanUsername}" (${cleanEmail})`, 'SUCCESS');
@@ -410,6 +408,7 @@ class DatabaseService {
 
   async verifyPasskey(pin: string): Promise<boolean> {
     const acc = this.getAccount();
+    if (!acc.doorPasskeyHash || !pin) return false;
     return await verifyHash(pin, acc.doorPasskeyHash);
   }
 
@@ -448,22 +447,18 @@ class DatabaseService {
   // --- DEVICES ---
   getDevices(accountId?: string): Device[] {
     const currentAcc = accountId || this.getCurrentSession()?.id;
-    const allDevices = this.getItem<Device[]>('devices', DEFAULT_DEVICES);
+    const allDevices = this.getItem<Device[]>('devices', []);
 
     if (!currentAcc) {
       return allDevices;
     }
 
     const userDevices = allDevices.filter(d => !d.ownerAccountId || d.ownerAccountId === currentAcc);
-    if (userDevices.length === 0) {
-      // Return default devices if no user-specific devices exist yet
-      return DEFAULT_DEVICES;
-    }
     return userDevices;
   }
 
   updateDeviceStatus(deviceId: string, status: Device['status']): void {
-    const allDevices = this.getItem<Device[]>('devices', DEFAULT_DEVICES);
+    const allDevices = this.getItem<Device[]>('devices', []);
     const updated = allDevices.map(d => d.id === deviceId ? { ...d, status, lastSeenAt: new Date().toISOString() } : d);
     this.setItem('devices', updated);
   }
@@ -527,30 +522,7 @@ class DatabaseService {
   }
 
   // --- TESTING & QA UTILITIES ---
-  seedTestActivityLogs(): void {
-    const mockEvents: Array<{ cat: EventCategory; desc: string; res: LogStatusResult }> = [
-      { cat: 'DOOR', desc: 'Door unlocked with Passkey (PIN: 1234)', res: 'SUCCESS' },
-      { cat: 'DOOR', desc: 'Door locked manually via App', res: 'SUCCESS' },
-      { cat: 'AUTH', desc: 'Failed door unlock attempt - Invalid PIN entered', res: 'FAILED' },
-      { cat: 'CLIMATE', desc: 'Daily Peak Temperature recorded: 32.4°C at 13:45', res: 'SUCCESS' },
-      { cat: 'EMERGENCY', desc: 'Smoke Sensor MQ-2 self-test completed with 0 errors', res: 'SUCCESS' },
-      { cat: 'SYSTEM', desc: 'Network ping refreshed: 14ms latency', res: 'SUCCESS' },
-      { cat: 'DOOR', desc: 'Auto-unlock failsafe triggered by temperature spike', res: 'TRIGGERED' },
-      { cat: 'AUTH', desc: 'Admin session refreshed', res: 'SUCCESS' }
-    ];
 
-    const currentLogs = this.getActivityLogs();
-    const seeded = mockEvents.map((ev, index) => ({
-      id: Date.now() + index,
-      actorName: 'QA Test Bot',
-      eventCategory: ev.cat,
-      actionDescription: `[TEST SAMPLE] ${ev.desc}`,
-      statusResult: ev.res,
-      createdAt: new Date(Date.now() - (index + 1) * 120000).toLocaleTimeString()
-    }));
-
-    this.setItem('logs', [...seeded, ...currentLogs].slice(0, 100));
-  }
 
   resetDatabase(): void {
     localStorage.removeItem(STORAGE_PREFIX + 'accounts');

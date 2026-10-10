@@ -38,6 +38,7 @@ import {
 } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
 import { dbService } from '../services/dbService';
+import { probeESP32 } from '../services/hardwareService';
 
 const Settings: React.FC = () => {
   const { 
@@ -62,11 +63,12 @@ const Settings: React.FC = () => {
     pollDevices,
     devices,
     hardwareConfig,
+    hardwareConnected,
     updateHardwareConfig,
-    seedDemoLogs,
     clearDatabaseLogs
   } = useStore();
 
+  const isDeviceConnected = hardwareConnected || simulationActive;
   const [espIpInput, setEspIpInput] = useState<string>(hardwareConfig.esp32Ip);
   const [showPinMask, setShowPinMask] = useState<boolean>(false);
   const [revealedPlainPin, setRevealedPlainPin] = useState<string | null>(null);
@@ -131,13 +133,66 @@ const Settings: React.FC = () => {
     });
   };
 
-  const handleSaveHardwareIp = () => {
-    updateHardwareConfig({ esp32Ip: espIpInput });
+  const handleSaveHardwareIp = async () => {
+    const clean = espIpInput.trim();
+    if (!clean) {
+      presentToast({
+        message: 'Please enter a valid IP address (e.g. 192.168.1.50)',
+        duration: 2000,
+        color: 'danger'
+      });
+      return;
+    }
+    updateHardwareConfig({ esp32Ip: clean, mode: 'hardware' });
     presentToast({
-      message: `ESP32 Target IP updated to ${espIpInput}`,
-      duration: 2000,
+      message: `ESP32 IP saved to ${clean}. Polling hardware...`,
+      duration: 2500,
       color: 'success'
     });
+    // Trigger probe
+    const res = await probeESP32(clean);
+    if (res.success && res.data) {
+      presentToast({
+        message: `🟢 Connected to ESP32! Temp: ${res.data.temperature}°C, Hum: ${res.data.humidity}%`,
+        duration: 3500,
+        color: 'success'
+      });
+      pollDevices();
+    }
+  };
+
+  const handlePingTest = async () => {
+    const clean = espIpInput.trim();
+    if (!clean) {
+      presentToast({
+        message: 'Please enter an ESP32 IP address first.',
+        duration: 2000,
+        color: 'warning'
+      });
+      return;
+    }
+
+    presentToast({
+      message: `Probing http://${clean}/api/status...`,
+      duration: 1500,
+      color: 'primary'
+    });
+
+    const res = await probeESP32(clean);
+    if (res.success && res.data) {
+      presentAlert({
+        header: '🟢 ESP32 Hardware Online!',
+        message: `Successfully connected to ESP32 at ${clean}!\n\n• Temperature: ${res.data.temperature}°C\n• Humidity: ${res.data.humidity}%\n• Door Lock: ${res.data.isLocked ? 'Locked' : 'Unlocked'}\n• Signal Strength: ${res.data.signalStrength}%\n• Uptime: ${res.data.uptimeSeconds}s`,
+        buttons: ['Done']
+      });
+      pollDevices();
+    } else {
+      presentAlert({
+        header: '🔴 ESP32 Connection Failed',
+        message: `${res.error || `Could not connect to http://${clean}`}\n\nTroubleshooting Steps:\n1. Verify your PC/Phone is on the SAME Wi-Fi network as the ESP32.\n2. Open http://${clean} in another browser tab to verify if the ESP32 web page loads.\n3. Verify the ESP32 is powered on and assigned ${clean}.`,
+        buttons: ['OK']
+      });
+    }
   };
 
   const handleModeChange = (mode: 'simulation' | 'hardware') => {
@@ -379,10 +434,28 @@ const Settings: React.FC = () => {
           </div>
 
           {/* 2. Security & Door Passkey Management */}
-          <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <IonIcon icon={shieldCheckmarkOutline} style={{ fontSize: '20px', color: '#a855f7' }} />
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Door Security Passkey</h2>
+          <div className="card" style={{
+            opacity: isDeviceConnected ? 1 : 0.6,
+            transition: 'all 0.3s ease',
+            border: !isDeviceConnected ? '1px dashed rgba(148, 163, 184, 0.3)' : undefined
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IonIcon icon={shieldCheckmarkOutline} style={{ fontSize: '20px', color: '#a855f7' }} />
+                <h2 style={{ margin: 0, fontSize: '18px' }}>Door Security Passkey</h2>
+              </div>
+              {!isDeviceConnected && (
+                <span style={{ 
+                  fontSize: '11px', 
+                  background: 'rgba(239, 68, 68, 0.15)', 
+                  color: '#f87171', 
+                  padding: '3px 8px', 
+                  borderRadius: '8px',
+                  fontWeight: '600'
+                }}>
+                  Offline
+                </span>
+              )}
             </div>
             
             <div style={{ 
@@ -405,15 +478,16 @@ const Settings: React.FC = () => {
                   letterSpacing: '3px',
                   fontFamily: 'monospace'
                 }}>
-                  {showPinMask ? (revealedPlainPin || '1234') : '••••'}
+                  {showPinMask ? (revealedPlainPin || '••••') : '••••'}
                 </strong>
                 <button 
                   onClick={handleTogglePinVisibility}
+                  disabled={!isDeviceConnected}
                   style={{
                     background: 'transparent',
                     border: 'none',
                     color: 'var(--text-muted)',
-                    cursor: 'pointer',
+                    cursor: isDeviceConnected ? 'pointer' : 'not-allowed',
                     padding: '4px',
                     display: 'flex',
                     alignItems: 'center'
@@ -426,15 +500,26 @@ const Settings: React.FC = () => {
             </div>
 
             <div style={{ display: 'flex', gap: '10px' }}>
-              <IonButton expand="block" color="light" size="small" onClick={handleChangePasskeyPrompt} style={{ flex: 1 }}>
+              <IonButton 
+                expand="block" 
+                color="light" 
+                size="small" 
+                onClick={handleChangePasskeyPrompt} 
+                disabled={!isDeviceConnected}
+                style={{ flex: 1 }}
+              >
                 <IonIcon icon={keyOutline} slot="start" />
-                Change 4-Digit PIN
+                {isDeviceConnected ? 'Change 4-Digit PIN' : 'Door Offline (Controls Locked)'}
               </IonButton>
             </div>
           </div>
 
           {/* 3. Door Authorization Duration Settings */}
-          <div className="card">
+          <div className="card" style={{
+            opacity: isDeviceConnected ? 1 : 0.6,
+            transition: 'all 0.3s ease',
+            border: !isDeviceConnected ? '1px dashed rgba(148, 163, 184, 0.3)' : undefined
+          }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
               <IonIcon icon={timerOutline} style={{ fontSize: '20px', color: '#38bdf8' }} />
               <h2 style={{ margin: 0, fontSize: '18px' }}>Passkey Session Timeout</h2>
@@ -445,6 +530,7 @@ const Settings: React.FC = () => {
 
             <IonSegment 
               value={doorSessionDurationMinutes.toString()} 
+              disabled={!isDeviceConnected}
               onIonChange={(e) => setDoorSessionDurationMinutes(parseInt(e.detail.value as string, 10))}
               style={{ background: 'var(--surface-alt)', borderRadius: '10px' }}
             >
@@ -462,41 +548,69 @@ const Settings: React.FC = () => {
 
           {/* 4. Registered Devices Registry */}
           <div className="card">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-              <IonIcon icon={hardwareChipOutline} style={{ fontSize: '20px', color: '#10b981' }} />
-              <h2 style={{ margin: 0, fontSize: '18px' }}>Registered Devices</h2>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IonIcon icon={hardwareChipOutline} style={{ fontSize: '20px', color: '#10b981' }} />
+                <h2 style={{ margin: 0, fontSize: '18px' }}>Registered Devices</h2>
+              </div>
+              <span style={{ 
+                fontSize: '11px', 
+                color: isDeviceConnected && devices.length > 0 ? 'var(--success)' : 'var(--text-dim)', 
+                fontWeight: '600' 
+              }}>
+                {isDeviceConnected && devices.length > 0 ? `${devices.length} Online` : '0 Connected'}
+              </span>
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {devices.map((d) => (
-                <div key={d.id} style={{ 
-                  padding: '12px', 
-                  background: 'var(--surface-alt)', 
-                  borderRadius: '10px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
-                  <div>
-                    <strong style={{ display: 'block', color: 'var(--text)', fontSize: '14px' }}>{d.name}</strong>
-                    <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                      MAC: {d.macAddress} • {d.roomLocation}
-                    </small>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <span style={{ 
-                      fontSize: '11px', 
-                      color: d.status === 'active' ? 'var(--success)' : 'var(--danger)',
-                      fontWeight: 'bold'
-                    }}>
-                      ● {d.status.toUpperCase()}
-                    </span>
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      {d.deviceType === 'door_lock' ? (isLocked ? 'Locked' : 'Unlocked') : `${signalStrength}% Signal`}
+
+            {(!isDeviceConnected || devices.length === 0) ? (
+              <div style={{ 
+                textAlign: 'center', 
+                padding: '24px 16px', 
+                background: 'var(--surface-alt)', 
+                borderRadius: '10px',
+                border: '1px dashed rgba(148, 163, 184, 0.25)'
+              }}>
+                <IonIcon icon={hardwareChipOutline} style={{ fontSize: '32px', color: 'var(--text-dim)', marginBottom: '8px' }} />
+                <strong style={{ display: 'block', color: 'var(--text-dim)', fontSize: '14px' }}>
+                  No Connected Devices Detected
+                </strong>
+                <p style={{ color: 'var(--text-muted)', fontSize: '12px', margin: '6px 0 0 0' }}>
+                  Connect to ESP32 Wi-Fi Hub or enable Demo Simulation in Developer Mode to register and monitor smart devices.
+                </p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {devices.map((d) => (
+                  <div key={d.id} style={{ 
+                    padding: '12px', 
+                    background: 'var(--surface-alt)', 
+                    borderRadius: '10px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <div>
+                      <strong style={{ display: 'block', color: 'var(--text)', fontSize: '14px' }}>{d.name}</strong>
+                      <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
+                        MAC: {d.macAddress} • {d.roomLocation}
+                      </small>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <span style={{ 
+                        fontSize: '11px', 
+                        color: d.status === 'active' ? 'var(--success)' : 'var(--danger)',
+                        fontWeight: 'bold'
+                      }}>
+                        ● {d.status.toUpperCase()}
+                      </span>
+                      <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        {d.deviceType === 'door_lock' ? (isLocked ? 'Locked' : 'Unlocked') : `${signalStrength}% Signal`}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* 5. Developer Mode Toggle Card */}
@@ -536,8 +650,33 @@ const Settings: React.FC = () => {
               }}>
                 <IonIcon icon={warningOutline} style={{ fontSize: '22px', color: '#f59e0b', flexShrink: 0 }} />
                 <span style={{ fontSize: '12px', color: '#fcd34d' }}>
-                  <strong>Developer Mode Active:</strong> Low-level IoT gateway and simulator controls are exposed below.
+                  <strong>Developer Mode Active:</strong> Low-level IoT gateway, simulation toggles, and QA controls are exposed below.
                 </span>
+              </div>
+
+              {/* Simulation / Demo Mode Toggle Card */}
+              <div className="card" style={{ 
+                border: simulationActive ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(245, 158, 11, 0.3)',
+                background: simulationActive ? 'rgba(16, 185, 129, 0.05)' : undefined
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <IonIcon icon={sparklesOutline} style={{ fontSize: '22px', color: simulationActive ? '#10b981' : 'var(--text-muted)' }} />
+                    <div>
+                      <strong style={{ fontSize: '15px', color: simulationActive ? '#10b981' : 'var(--text)' }}>
+                        Demo / Simulation Mode
+                      </strong>
+                      <small style={{ color: 'var(--text-muted)', fontSize: '12px', display: 'block' }}>
+                        {simulationActive ? 'Simulating virtual telemetry & smart devices' : 'Disabled — Real hardware required'}
+                      </small>
+                    </div>
+                  </div>
+                  <IonToggle 
+                    checked={simulationActive} 
+                    onIonChange={toggleSimulation}
+                    color="success"
+                  />
+                </div>
               </div>
 
               {/* Hardware Gateway Mode */}
@@ -599,7 +738,7 @@ const Settings: React.FC = () => {
                       <IonButton expand="block" size="small" color="primary" onClick={handleSaveHardwareIp} style={{ flex: 1 }}>
                         Save IP
                       </IonButton>
-                      <IonButton expand="block" size="small" color="light" onClick={pollDevices} style={{ flex: 1 }}>
+                      <IonButton expand="block" size="small" color="light" onClick={handlePingTest} style={{ flex: 1 }}>
                         Ping Test
                       </IonButton>
                     </div>
@@ -672,20 +811,9 @@ const Settings: React.FC = () => {
                     <IonButton expand="block" color="warning" fill="outline" size="small" onClick={handleSimulateFailedAuth}>
                       Test Failed Auth Log
                     </IonButton>
-                    <IonButton expand="block" color="secondary" fill="outline" onClick={seedDemoLogs}>
-                      <IonIcon icon={sparklesOutline} slot="start" />
-                      Seed 10+ Mock Activity Logs
-                    </IonButton>
                     <IonButton expand="block" color="light" onClick={handleExportJson}>
                       <IonIcon icon={cloudDownloadOutline} slot="start" />
                       Export DB JSON Snapshot
-                    </IonButton>
-                    <IonButton 
-                      expand="block" 
-                      color={simulationActive ? "medium" : "success"} 
-                      onClick={toggleSimulation}
-                    >
-                      {simulationActive ? 'Pause Background Simulation' : 'Resume Background Simulation'}
                     </IonButton>
                     <IonButton expand="block" color="danger" fill="clear" onClick={handleFactoryResetPrompt}>
                       Factory Reset Database
