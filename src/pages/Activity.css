@@ -1,0 +1,245 @@
+/* =========================================================
+   Activity & Audit Logs Overhauled High-Contrast Tabs & List
+========================================================= */
+
+.activity-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.activity-title-main {
+  font-size: 20px;
+  font-weight: 800;
+  color: #f8fafc;
+  margin: 0;
+  letter-spacing: -0.3px;
+}
+
+.activity-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* Category Filter Tabs Container */
+.activity-tabs-scroll {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+  -webkit-overflow-scrolling: touch;
+}
+
+.activity-tabs-scroll::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+/* Individual High-Visibility Tab Button */
+.activity-tab-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 14px;
+  background: #101d30;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 12px;
+  color: #cbd5e1;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  user-select: none;
+}
+
+.activity-tab-btn:hover {
+  background: #172a45;
+  color: #ffffff;
+  border-color: rgba(56, 189, 248, 0.4);
+  transform: translateY(-1px);
+}
+
+.activity-tab-btn:active {
+  transform: translateY(0px) scale(0.97);
+}
+
+.activity-tab-btn .tab-icon {
+  font-size: 16px;
+  color: #94a3b8;
+  transition: color 0.2s ease;
+}
+
+.activity-tab-btn .tab-count-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #94a3b8;
+  transition: all 0.2s ease;
+}
+
+/* --- ACTIVE STATES (Vibrant & High Contrast for human readability) --- */
+
+/* ALL Events */
+.activity-tab-btn.active.tab-ALL {
+  background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(2, 132, 199, 0.4);
+}
+.activity-tab-btn.active.tab-ALL .tab-icon {
+  color: #ffffff;
+}
+.activity-tab-btn.active.tab-ALL .tab-count-badge {
+  background: rgba(0, 0, 0, 0.25);
+  color: #ffffff;
+}
+
+/* DOOR Events */
+.activity-tab-btn.active.tab-DOOR {
+  background: linear-gradient(135deg, #0284c7 0%, #024e77 100%);
+  border-color: #38bdf8;
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(56, 189, 248, 0.35);
+}
+.activity-tab-btn.active.tab-DOOR .tab-icon {
+  color: #38bdf8;
+}
+.activity-tab-btn.active.tab-DOOR .tab-count-badge {
+  background: rgba(0, 0, 0, 0.3);
+  color: #e0f2fe;
+}
+
+/* CLIMATE Events */
+.activity-tab-btn.active.tab-CLIMATE {
+  background: linear-gradient(135deg, #059669 0%, #065f46 100%);
+  border-color: #34d399;
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+}
+.activity-tab-btn.active.tab-CLIMATE .tab-icon {
+  color: #6ee7b7;
+}
+.activity-tab-btn.active.tab-CLIMATE .tab-count-badge {
+  background: rgba(0, 0, 0, 0.3);
+  color: #d1fae5;
+}
+
+/* EMERGENCY Events */
+.activity-tab-btn.active.tab-EMERGENCY {
+  background: linear-gradient(135deg, #e11d48 0%, #9f1239 100%);
+  border-color: #fb7185;
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(244, 63, 94, 0.4);
+}
+.activity-tab-btn.active.tab-EMERGENCY .tab-icon {
+  color: #ffe4e6;
+}
+.activity-tab-btn.active.tab-EMERGENCY .tab-count-badge {
+  background: rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+}
+
+/* AUTH & Security Events */
+.activity-tab-btn.active.tab-AUTH {
+  background: linear-gradient(135deg, #7c3aed 0%, #5b21b6 100%);
+  border-color: #c084fc;
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(168, 85, 247, 0.35);
+}
+.activity-tab-btn.active.tab-AUTH .tab-icon {
+  color: #e9d5ff;
+}
+.activity-tab-btn.active.tab-AUTH .tab-count-badge {
+  background: rgba(0, 0, 0, 0.3);
+  color: #f3e8ff;
+}
+
+/* SYSTEM Events */
+.activity-tab-btn.active.tab-SYSTEM {
+  background: linear-gradient(135deg, #d97706 0%, #92400e 100%);
+  border-color: #fbbf24;
+  color: #ffffff;
+  box-shadow: 0 4px 15px rgba(245, 158, 11, 0.35);
+}
+.activity-tab-btn.active.tab-SYSTEM .tab-icon {
+  color: #fde68a;
+}
+.activity-tab-btn.active.tab-SYSTEM .tab-count-badge {
+  background: rgba(0, 0, 0, 0.3);
+  color: #ffffff;
+}
+
+/* --- Log Entry Card Styling --- */
+.log-item-card {
+  padding: 14px 16px;
+  background: var(--surface-alt);
+  border-radius: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.log-item-card:hover {
+  border-color: rgba(56, 189, 248, 0.3);
+  transform: translateY(-1px);
+}
+
+.log-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.log-category-tag {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.log-actor-name {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  margin-left: 4px;
+}
+
+.log-meta-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.log-status-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+}
+
+.log-time-text {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: monospace;
+}
+
+.log-action-text {
+  color: #f1f5f9;
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 500;
+}
