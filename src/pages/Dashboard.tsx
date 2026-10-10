@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonButton, IonIcon } from '@ionic/react';
-import { lockClosed, lockOpen, keyOutline, warningOutline, timeOutline, checkmarkCircleOutline } from 'ionicons/icons';
+import { lockClosed, lockOpen, keyOutline, warningOutline, timeOutline, checkmarkCircleOutline, wifiOutline } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
 import { PasskeyModal } from '../components/PasskeyModal';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
@@ -58,10 +58,14 @@ const Dashboard: React.FC = () => {
     closePasskeyModal,
     executeAuthenticatedDoorToggle,
     toggleLock,
-    revokeDoorAuthorization
+    revokeDoorAuthorization,
+    hardwareConnected,
+    hardwareConfig,
+    simulationActive
   } = useStore();
 
   const [remainingMinutes, setRemainingMinutes] = useState<number>(0);
+  const isDeviceConnected = hardwareConnected || simulationActive;
 
   useEffect(() => {
     const calculateRemaining = () => {
@@ -86,7 +90,7 @@ const Dashboard: React.FC = () => {
   const isSessionActive = isDoorAuthorized && remainingMinutes > 0;
 
   const handleDoorToggleAction = async () => {
-    if (isAlarming) return;
+    if (isAlarming || !isDeviceConnected) return;
     try {
       await Haptics.impact({ style: ImpactStyle.Light });
     } catch {}
@@ -140,12 +144,45 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
+          {/* Hardware Connection Error Card */}
+          {!hardwareConnected && hardwareConfig.mode === 'hardware' && (
+            <div className="card" style={{ border: '2px solid var(--warning)', backgroundColor: 'rgba(234, 179, 8, 0.12)', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <IonIcon icon={wifiOutline} style={{ fontSize: '28px', color: 'var(--warning)' }} />
+                <div>
+                  <h2 style={{ color: 'var(--warning)', margin: 0, fontSize: '18px' }}>NO HARDWARE DETECTED</h2>
+                  <p style={{ color: 'var(--text-dim)', margin: '4px 0 0 0', fontSize: '13px' }}>
+                    The ESP32 Hub is unreachable. Showing 0 values. Please check power and network connection.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Door Status Card with Security Passkey Badge */}
-          <div className="card">
+          <div className="card" style={{
+            opacity: isDeviceConnected ? 1 : 0.6,
+            transition: 'all 0.3s ease',
+            border: !isDeviceConnected ? '1px dashed rgba(148, 163, 184, 0.3)' : undefined
+          }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <h2 style={{ margin: 0 }}>Front Door Security</h2>
               
-              {isSessionActive ? (
+              {!isDeviceConnected ? (
+                <span style={{ 
+                  fontSize: '11px', 
+                  background: 'rgba(239, 68, 68, 0.15)', 
+                  color: '#f87171', 
+                  padding: '4px 10px', 
+                  borderRadius: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  fontWeight: '600'
+                }}>
+                  ● Hardware Offline
+                </span>
+              ) : isSessionActive ? (
                 <span style={{ 
                   fontSize: '11px', 
                   background: 'rgba(16, 185, 129, 0.15)', 
@@ -176,8 +213,12 @@ const Dashboard: React.FC = () => {
             </div>
 
             <div className="door-container">
-              <div className="door-frame" onClick={handleDoorToggleAction} style={{ cursor: 'pointer' }}>
-                <div className={`door-panel ${!isLocked ? 'unlocked' : ''}`}>
+              <div 
+                className="door-frame" 
+                onClick={handleDoorToggleAction} 
+                style={{ cursor: isDeviceConnected ? 'pointer' : 'not-allowed' }}
+              >
+                <div className={`door-panel ${!isLocked && isDeviceConnected ? 'unlocked' : ''}`}>
                   <div className="door-knob"></div>
                 </div>
               </div>
@@ -188,12 +229,15 @@ const Dashboard: React.FC = () => {
                 display: 'inline-flex',
                 alignItems: 'center',
                 gap: '6px',
-                color: isLocked ? 'var(--success)' : 'var(--warning)', 
+                color: !isDeviceConnected ? 'var(--text-dim)' : (isLocked ? 'var(--success)' : 'var(--warning)'), 
                 fontWeight: 'bold',
                 fontSize: '16px'
               }}>
-                <IonIcon icon={isLocked ? lockClosed : lockOpen} />
-                {isLocked ? 'SECURELY LOCKED' : 'UNLOCKED'}
+                <IonIcon icon={isLocked || !isDeviceConnected ? lockClosed : lockOpen} />
+                {!isDeviceConnected 
+                  ? 'OFFLINE (CONTROLS LOCKED)' 
+                  : (isLocked ? 'SECURELY LOCKED' : 'UNLOCKED')
+                }
               </span>
             </div>
 
@@ -202,17 +246,20 @@ const Dashboard: React.FC = () => {
                 expand="block" 
                 color={isLocked ? "primary" : "warning"}
                 onClick={handleDoorToggleAction}
-                disabled={isAlarming}
+                disabled={isAlarming || !isDeviceConnected}
                 style={{ '--border-radius': '12px', margin: 0 }}
               >
                 <IonIcon icon={isLocked ? lockOpen : lockClosed} slot="start" />
-                {isLocked 
-                  ? (isSessionActive ? 'Unlock Door' : 'Unlock with Passkey')
-                  : 'Lock Door'
+                {!isDeviceConnected 
+                  ? 'Door Controls Disabled (No Connection)' 
+                  : (isLocked 
+                      ? (isSessionActive ? 'Unlock Door' : 'Unlock with Passkey')
+                      : 'Lock Door'
+                    )
                 }
               </IonButton>
 
-              {isSessionActive && (
+              {isSessionActive && isDeviceConnected && (
                 <IonButton
                   expand="block"
                   fill="clear"
@@ -238,7 +285,7 @@ const Dashboard: React.FC = () => {
           <div style={{ display: 'flex', gap: '16px' }}>
             <div className="mini-card" style={{ flex: 1 }}>
               <h3 style={{ color: 'var(--text-dim)', margin: '0 0 10px 0', fontSize: '13px' }}>Temperature</h3>
-              <div style={{ fontSize: '26px', fontWeight: 'bold', color: temperature >= 45 ? 'var(--danger)' : 'var(--text)' }}>
+              <div style={{ fontSize: '26px', fontWeight: 'bold', color: temperature >= 40 ? 'var(--danger)' : 'var(--text)' }}>
                 {temperature}°C
               </div>
             </div>

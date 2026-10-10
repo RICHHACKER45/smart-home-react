@@ -65,7 +65,7 @@ export const useSiren = () => {
           }
           isOn = !isOn;
         }, 150);
-      } else if (temperature >= 45) {
+      } else if (temperature >= 40) {
         // Sawtooth sweep (600Hz to 1200Hz) with continuous heavy haptic
         const playSweep = () => {
           const osc = ctx.createOscillator();

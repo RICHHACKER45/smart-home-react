@@ -1,21 +1,22 @@
-import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar } from '@ionic/react';
+import { IonContent, IonHeader, IonPage, IonTitle, IonToolbar, IonIcon } from '@ionic/react';
+import { wifiOutline } from 'ionicons/icons';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { useStore } from '../store/useStore';
 
 const Climate: React.FC = () => {
-  const { temperatureHistory, temperature } = useStore();
+  const { temperatureHistory, temperature, hardwareConnected, hardwareConfig } = useStore();
 
   const getAdvice = () => {
     if (temperature >= 60) return "🌋 EXTREME HEAT: Immediate danger!";
-    if (temperature >= 45) return "⚠️ EMERGENCY: Safety protocol engaged.";
-    if (temperature >= 40) return "🔥 CRITICAL: High temperature.";
+    if (temperature >= 40) return "⚠️ EMERGENCY: Safety protocol engaged.";
+    if (temperature >= 35) return "🔥 CRITICAL: High temperature.";
     if (temperature >= 30) return "🌡️ WARNING: Room is getting warm.";
     if (temperature < 23) return "❄️ COOL: Room temperature is low.";
     return "✅ Environment is within target range.";
   };
 
   const getAdviceColor = () => {
-    if (temperature >= 45) return 'var(--danger)';
+    if (temperature >= 40) return 'var(--danger)';
     if (temperature >= 30) return 'var(--warning)';
     return 'var(--text-dim)';
   };
@@ -40,7 +41,22 @@ const Climate: React.FC = () => {
         </IonHeader>
         
         <div style={{ padding: '20px' }}>
-          <div className="card" style={{ marginTop: '20px' }}>
+          {/* Hardware Connection Error Card */}
+          {!hardwareConnected && hardwareConfig.mode === 'hardware' && (
+            <div className="card" style={{ border: '2px solid var(--warning)', backgroundColor: 'rgba(234, 179, 8, 0.12)', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <IonIcon icon={wifiOutline} style={{ fontSize: '28px', color: 'var(--warning)' }} />
+                <div>
+                  <h2 style={{ color: 'var(--warning)', margin: 0, fontSize: '18px' }}>NO HARDWARE DETECTED</h2>
+                  <p style={{ color: 'var(--text-dim)', margin: '4px 0 0 0', fontSize: '13px' }}>
+                    The ESP32 Hub is unreachable. Showing 0 values. Please check power and network connection.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="card" style={{ marginTop: '0px' }}>
             <h2>System Advice</h2>
             <p style={{ color: getAdviceColor(), fontWeight: 'bold' }}>
               {getAdvice()}
@@ -60,7 +76,7 @@ const Climate: React.FC = () => {
                   />
                   <Bar dataKey="temp" radius={[4, 4, 0, 0]}>
                     {data.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.temp > 45 ? 'var(--danger)' : 'var(--accent)'} />
+                      <Cell key={`cell-${index}`} fill={entry.temp >= 40 ? 'var(--danger)' : 'var(--accent)'} />
                     ))}
                   </Bar>
                 </BarChart>
