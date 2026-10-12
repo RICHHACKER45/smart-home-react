@@ -20,6 +20,8 @@ export interface SmartHomeState {
   isDeveloperMode: boolean;
   temperature: number;
   humidity: number;
+  gasValue: number;
+  gasThreshold: number;
   latencyMs: number;
   signalStrength: number;
   networkHealth: number;
@@ -54,6 +56,7 @@ export interface SmartHomeState {
   increaseTemp: (amount: number) => void;
   setExactTemperature: (temp: number) => void;
   setExactHumidity: (hum: number) => void;
+  simulateElevatedHumidity: (hum?: number) => void;
   simulateSmoke: () => void;
   simulateExtremeHeat: () => void;
   resetSystem: () => void;
@@ -72,7 +75,9 @@ export const useStore = create<SmartHomeState>((set, get) => {
   const checkSafetyRules = (state: Partial<SmartHomeState>) => {
     const current = get();
     const temp = state.temperature ?? current.temperature;
-    const smoke = state.smokeActive ?? current.smokeActive;
+    const gasVal = state.gasValue !== undefined ? state.gasValue : (current.gasValue || 0);
+    const gasThresh = state.gasThreshold !== undefined ? state.gasThreshold : (current.gasThreshold || 1800);
+    const smoke = (state.smokeActive ?? current.smokeActive) || (gasVal >= gasThresh && gasVal > 0);
     
     let isAlarming = state.isAlarming !== undefined ? state.isAlarming : current.isAlarming;
     let isLocked = state.isLocked ?? current.isLocked;
@@ -80,9 +85,17 @@ export const useStore = create<SmartHomeState>((set, get) => {
     // Simulated/local triggers based on data thresholds
     if (temp >= 40 || smoke) {
       if (!isAlarming) {
+        let reason = '';
+        if (smoke) {
+          reason = gasVal >= gasThresh 
+            ? `Smoke/Gas Spike (${gasVal} ADC / Limit: ${gasThresh})` 
+            : 'Dense Smoke Detected (MQ-2 Spike)';
+        } else {
+          reason = `Critical Heat (${temp}°C / Limit: 40.0°C)`;
+        }
         dbService.createAlert(
           smoke ? 'SMOKE_DETECTED' : 'CRITICAL_HEAT', 
-          smoke ? 'Dense Smoke Detected' : `${temp}°C High Heat`
+          reason
         );
       }
       isAlarming = true;
@@ -100,6 +113,7 @@ export const useStore = create<SmartHomeState>((set, get) => {
       ...state, 
       isAlarming, 
       isLocked,
+      smokeActive: smoke,
       logs: dbService.getActivityLogs(),
       alerts: dbService.getAlerts()
     };
@@ -117,6 +131,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
     isDeveloperMode: localStorage.getItem('smart_home_dev_mode') === 'true',
     temperature: 0,
     humidity: 0,
+    gasValue: 0,
+    gasThreshold: 1800,
     latencyMs: 0,
     signalStrength: 0,
     networkHealth: 0,
@@ -307,9 +323,16 @@ export const useStore = create<SmartHomeState>((set, get) => {
       return { humidity: formatted };
     }),
 
+    simulateElevatedHumidity: (hum = 68) => set(() => {
+      dbService.logActivity('Tester', 'CLIMATE', `Simulated elevated humidity warning injected (${hum}%)`);
+      return { humidity: hum };
+    }),
+
     simulateSmoke: () => set(() => {
       return checkSafetyRules({
-        smokeActive: true
+        smokeActive: true,
+        gasValue: 2650,
+        gasThreshold: 1800
       });
     }),
 
@@ -331,6 +354,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
         isLocked: true,
         temperature: 24.8,
         humidity: 47,
+        gasValue: 320,
+        gasThreshold: 1800,
         latencyMs: 12,
         signalStrength: 98,
         networkHealth: 96,
@@ -359,6 +384,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
           simulationActive: true,
           temperature: state.temperature === 0 ? 24.5 : state.temperature,
           humidity: state.humidity === 0 ? 48 : state.humidity,
+          gasValue: state.gasValue === 0 ? 320 : state.gasValue,
+          gasThreshold: 1800,
           signalStrength: state.signalStrength === 0 ? 95 : state.signalStrength,
           networkHealth: state.networkHealth === 0 ? 98 : state.networkHealth,
           latencyMs: state.latencyMs === 0 ? 12 : state.latencyMs,
@@ -370,6 +397,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
           simulationActive: false,
           temperature: 0,
           humidity: 0,
+          gasValue: 0,
+          gasThreshold: 1800,
           signalStrength: 0,
           networkHealth: 0,
           latencyMs: 0,
@@ -393,10 +422,16 @@ export const useStore = create<SmartHomeState>((set, get) => {
       if (!state.simulationActive) return;
 
       set((currentState) => {
-        // Slight temperature randomization
+        // Slight temperature, humidity, and gas randomization
         let newTemp = currentState.temperature;
+        let newHum = currentState.humidity;
+        let newGas = currentState.gasValue;
         if (!currentState.isAlarming) {
           newTemp = Number((newTemp + (Math.random() - 0.5)).toFixed(1));
+          newHum = Math.min(100, Math.max(20, Math.round(newHum + (Math.random() * 2 - 1))));
+          newGas = Math.max(240, Math.min(550, Math.round((newGas || 320) + (Math.random() * 20 - 10))));
+        } else if (currentState.smokeActive) {
+          newGas = Math.max(2200, Math.min(3200, Math.round((newGas || 2650) + (Math.random() * 60 - 30))));
         }
 
         const newLatency = Math.floor(Math.random() * 25) + 8;
@@ -404,6 +439,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
 
         return checkSafetyRules({
           temperature: newTemp,
+          humidity: newHum,
+          gasValue: newGas,
           latencyMs: newLatency,
           temperatureHistory: newHistory
         });
@@ -462,8 +499,10 @@ export const useStore = create<SmartHomeState>((set, get) => {
             return checkSafetyRules({
               temperature: telemetry.temperature,
               humidity: telemetry.humidity,
+              gasValue: telemetry.gasValue ?? 0,
+              gasThreshold: telemetry.gasThreshold ?? 1800,
               isLocked: telemetry.isLocked,
-              smokeActive: telemetry.smokeActive,
+              smokeActive: telemetry.smokeActive || (telemetry.gasValue !== undefined && telemetry.gasValue >= (telemetry.gasThreshold || 1800)),
               isAlarming: telemetry.isAlarming,
               signalStrength: telemetry.signalStrength,
               networkHealth: Math.min(100, Math.max(70, telemetry.signalStrength || 92)),
@@ -478,6 +517,8 @@ export const useStore = create<SmartHomeState>((set, get) => {
           set({
             temperature: 0,
             humidity: 0,
+            gasValue: 0,
+            gasThreshold: 1800,
             smokeActive: false,
             isAlarming: false,
             signalStrength: 0,
