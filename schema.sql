@@ -3,7 +3,7 @@
 -- Optimized for Supabase (PostgreSQL) & IoT Realtime
 -- ========================================================
 
--- Drop tables if resetting (in proper reverse foreign key order)
+-- Clean Drop of all existing tables (reverse foreign key order)
 DROP TABLE IF EXISTS emergency_alerts CASCADE;
 DROP TABLE IF EXISTS activity_logs CASCADE;
 DROP TABLE IF EXISTS daily_climate_summaries CASCADE;
@@ -17,7 +17,7 @@ CREATE TABLE accounts (
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(100) UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
-    door_passkey_hash VARCHAR(255) NOT NULL, -- 4-digit PIN (Default: '1234')
+    door_passkey_hash VARCHAR(255) NOT NULL DEFAULT '1234', -- 4-6 digit PIN (Default: '1234')
     role VARCHAR(20) DEFAULT 'admin' CHECK (role IN ('admin', 'resident', 'guest')),
     status VARCHAR(20) DEFAULT 'active' CHECK (status IN ('active', 'suspended')),
     fcm_push_token TEXT NULL,
@@ -28,6 +28,7 @@ CREATE TABLE accounts (
 -- 2. HARDWARE DEVICES REGISTRY
 CREATE TABLE devices (
     id VARCHAR(36) PRIMARY KEY,
+    owner_account_id VARCHAR(36) NULL,
     mac_address VARCHAR(17) UNIQUE NOT NULL,
     name VARCHAR(100) NOT NULL,
     device_type VARCHAR(30) NOT NULL CHECK (device_type IN ('door_lock', 'climate_sensor', 'smoke_detector', 'combo_hub')),
@@ -37,8 +38,10 @@ CREATE TABLE devices (
     signal_strength INT DEFAULT 100 CHECK (signal_strength BETWEEN 0 AND 100),
     battery_level INT NULL CHECK (battery_level BETWEEN 0 AND 100),
     last_seen_at TIMESTAMPTZ NULL,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_device_owner FOREIGN KEY (owner_account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
+CREATE INDEX idx_devices_owner ON devices(owner_account_id);
 
 -- 3. ENVIRONMENTAL SENSOR TELEMETRY
 CREATE TABLE sensor_readings (
@@ -48,7 +51,7 @@ CREATE TABLE sensor_readings (
     humidity DECIMAL(4, 1) NULL,
     smoke_detected BOOLEAN DEFAULT FALSE,
     recorded_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_sensor_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE RESTRICT
+    CONSTRAINT fk_sensor_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE
 );
 CREATE INDEX idx_sensor_readings_device_time ON sensor_readings(device_id, recorded_at DESC);
 
@@ -61,11 +64,11 @@ CREATE TABLE daily_climate_summaries (
     min_temperature DECIMAL(4, 1) NOT NULL,
     avg_temperature DECIMAL(4, 1) NOT NULL,
     avg_humidity DECIMAL(4, 1) NULL,
-    CONSTRAINT fk_summary_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_summary_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
     CONSTRAINT uq_device_date UNIQUE (device_id, record_date)
 );
 
--- 5. ACTIVITY & AUDIT LOGS
+-- 5. ACTIVITY & AUDIT LOGS (Immutable System Audit Trail)
 CREATE TABLE activity_logs (
     id BIGINT PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
     account_id VARCHAR(36) NULL,
@@ -80,6 +83,7 @@ CREATE TABLE activity_logs (
     CONSTRAINT fk_log_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE SET NULL
 );
 CREATE INDEX idx_activity_logs_created ON activity_logs(created_at DESC);
+CREATE INDEX idx_activity_logs_category ON activity_logs(event_category, created_at DESC);
 
 -- 6. EMERGENCY HAZARD INCIDENTS
 CREATE TABLE emergency_alerts (
@@ -92,9 +96,10 @@ CREATE TABLE emergency_alerts (
     resolved_by_account_id VARCHAR(36) NULL,
     triggered_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     resolved_at TIMESTAMPTZ NULL,
-    CONSTRAINT fk_alert_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE RESTRICT,
+    CONSTRAINT fk_alert_device FOREIGN KEY (device_id) REFERENCES devices(id) ON DELETE CASCADE,
     CONSTRAINT fk_alert_resolved_by FOREIGN KEY (resolved_by_account_id) REFERENCES accounts(id) ON DELETE SET NULL
 );
+CREATE INDEX idx_emergency_alerts_status ON emergency_alerts(status, triggered_at DESC);
 
 -- ========================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES & PERMISSIONS
@@ -108,7 +113,7 @@ ALTER TABLE daily_climate_summaries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE activity_logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE emergency_alerts ENABLE ROW LEVEL SECURITY;
 
--- Allow Public/Anon Access for Development & ESP32 Telemetry
+-- Allow Public/Anon Access for Development, Mobile App & ESP32 Telemetry
 CREATE POLICY "Public Read/Write Accounts" ON accounts FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public Read/Write Devices" ON devices FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public Read/Write Readings" ON sensor_readings FOR ALL USING (true) WITH CHECK (true);
@@ -116,34 +121,52 @@ CREATE POLICY "Public Read/Write Climate" ON daily_climate_summaries FOR ALL USI
 CREATE POLICY "Public Read/Write Logs" ON activity_logs FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "Public Read/Write Alerts" ON emergency_alerts FOR ALL USING (true) WITH CHECK (true);
 
--- Enable Supabase Realtime for instant live WebSocket sync on phones
-ALTER PUBLICATION supabase_realtime ADD TABLE devices;
-ALTER PUBLICATION supabase_realtime ADD TABLE sensor_readings;
-ALTER PUBLICATION supabase_realtime ADD TABLE activity_logs;
-ALTER PUBLICATION supabase_realtime ADD TABLE emergency_alerts;
+-- ========================================================
+-- SUPABASE REALTIME CONFIGURATION
+-- ========================================================
+
+DO $$
+BEGIN
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE devices;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE sensor_readings;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE activity_logs;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+    BEGIN
+        ALTER PUBLICATION supabase_realtime ADD TABLE emergency_alerts;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+END $$;
 
 -- ========================================================
 -- INITIAL SEED DATA
 -- ========================================================
 
--- Insert Default Admin Account (PIN: 1234)
+-- Insert Default Admin Account (Username: admin | Password: password123 | PIN: 1234)
 INSERT INTO accounts (id, username, email, password_hash, door_passkey_hash, role, status)
 VALUES (
     'acc-admin-01',
     'admin',
     'admin@smarthome.local',
-    '$2a$12$e8x/QWbK9e/e0H5b.7o2O.O3H8sN.e.X4Q6Z8N8sQ7o8Q6sQ6Z8N8',
+    'password123',
     '1234',
     'admin',
     'active'
 );
 
--- Insert Default Devices
-INSERT INTO devices (id, mac_address, name, device_type, room_location, ip_address, status, signal_strength, battery_level)
+-- Insert Default Hardware Devices linked to Admin Account
+INSERT INTO devices (id, owner_account_id, mac_address, name, device_type, room_location, ip_address, status, signal_strength, battery_level)
 VALUES 
-    ('dev-door-01', 'B8:27:EB:44:11:01', 'Front Main Entrance Lock', 'door_lock', 'Main Entrance', '192.168.1.101', 'active', 98, 92),
-    ('dev-climate-01', 'B8:27:EB:44:11:02', 'Living Room Climate Sensor (DHT22)', 'climate_sensor', 'Living Room', '192.168.1.102', 'active', 95, 88),
-    ('dev-smoke-01', 'B8:27:EB:44:11:03', 'Kitchen Smoke & Gas Detector (MQ-2)', 'smoke_detector', 'Kitchen', '192.168.1.103', 'active', 91, 97);
+    ('dev-door-01', 'acc-admin-01', 'B8:27:EB:44:11:01', 'Front Main Entrance Lock', 'door_lock', 'Main Entrance', '192.168.1.101', 'active', 98, 92),
+    ('dev-climate-01', 'acc-admin-01', 'B8:27:EB:44:11:02', 'Living Room Climate Sensor (DHT22)', 'climate_sensor', 'Living Room', '192.168.1.102', 'active', 95, 88),
+    ('dev-smoke-01', 'acc-admin-01', 'B8:27:EB:44:11:03', 'Kitchen Smoke & Gas Detector (MQ-2)', 'smoke_detector', 'Kitchen', '192.168.1.103', 'active', 91, 97);
 
 -- Insert Initial System Boot Activity Log
 INSERT INTO activity_logs (account_id, actor_name, device_id, event_category, action_description, status_result)

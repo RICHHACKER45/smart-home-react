@@ -12,14 +12,7 @@ import {
 } from '@ionic/react';
 import { 
   refreshOutline, 
-  thermometerOutline, 
-  speedometerOutline, 
-  waterOutline, 
-  statsChartOutline,
-  trendingUpOutline,
-  trendingDownOutline,
-  shieldCheckmarkOutline,
-  alertCircleOutline
+  statsChartOutline
 } from 'ionicons/icons';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Cell } from 'recharts';
 import { useStore } from '../store/useStore';
@@ -28,13 +21,9 @@ const Analytics: React.FC = () => {
   const { 
     temperatureHistory, 
     temperature, 
-    humidity, 
-    gasValue, 
-    gasThreshold, 
     pollDevices, 
     hardwareConnected, 
-    simulationActive,
-    hardwareConfig 
+    simulationActive
   } = useStore();
 
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -236,45 +225,6 @@ const Analytics: React.FC = () => {
             }}>
               <span>T-11 (Earliest sampled tick)</span>
               <span>T-0 (Latest live sample)</span>
-            </div>
-          </div>
-
-          {/* SENSOR HEALTH & THRESHOLD ANALYSIS */}
-          <div className="card" style={{ padding: '16px' }}>
-            <h3 style={{ margin: '0 0 12px 0', fontSize: '15px', fontWeight: 'bold' }}>
-              Sensor Safety Benchmarks
-            </h3>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <IonIcon icon={thermometerOutline} style={{ color: 'var(--danger)' }} />
-                  <span style={{ fontSize: '13px', color: 'var(--text)' }}>Critical Heat Threshold</span>
-                </div>
-                <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'var(--text)' }}>
-                  40.0°C <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>(Current: {temperature.toFixed(1)}°C)</span>
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <IonIcon icon={waterOutline} style={{ color: 'var(--warning)' }} />
-                  <span style={{ fontSize: '13px', color: 'var(--text)' }}>Relative Humidity Advisory</span>
-                </div>
-                <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'var(--text)' }}>
-                  60.0% RH <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>(Current: {humidity}%)</span>
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <IonIcon icon={speedometerOutline} style={{ color: 'var(--accent)' }} />
-                  <span style={{ fontSize: '13px', color: 'var(--text)' }}>MQ-2 Gas Alarm Threshold</span>
-                </div>
-                <span style={{ fontWeight: 'bold', fontSize: '13px', color: 'var(--text)' }}>
-                  {gasThreshold} ADC <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>(Current: {gasValue} ADC)</span>
-                </span>
-              </div>
             </div>
           </div>
 

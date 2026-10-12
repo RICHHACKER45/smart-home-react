@@ -25,7 +25,7 @@ import { EventCategory } from '../types/database';
 import './Activity.css';
 
 const Activity: React.FC = () => {
-  const { logs, isAlarming, resetSystem } = useStore();
+  const { logs, isAlarming } = useStore();
   const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
 
   const categories = [
@@ -92,6 +92,19 @@ const Activity: React.FC = () => {
     return { background: 'rgba(148, 163, 184, 0.2)', color: '#cbd5e1', border: '1px solid rgba(148, 163, 184, 0.3)' };
   };
 
+  const formatLogTime = (timeStr?: string) => {
+    if (!timeStr) return '';
+    try {
+      if (timeStr.includes('T')) {
+        const d = new Date(timeStr);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+      }
+    } catch {}
+    return timeStr;
+  };
+
   return (
     <IonPage>
       <IonHeader>
@@ -135,13 +148,22 @@ const Activity: React.FC = () => {
                     🚨 Emergency Hazard In Progress
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                    Buzzer siren active & door failsafe egress unlocked
+                    Audible buzzer active • Door failsafe disengaged for exit
                   </div>
                 </div>
               </div>
-              <IonButton size="small" color="success" onClick={resetSystem}>
-                Silence / Reset
-              </IonButton>
+              <span style={{
+                padding: '5px 10px',
+                borderRadius: '8px',
+                background: 'rgba(244, 63, 94, 0.25)',
+                color: '#f43f5e',
+                fontSize: '11px',
+                fontWeight: 'bold',
+                border: '1px solid rgba(244, 63, 94, 0.5)',
+                letterSpacing: '0.5px'
+              }}>
+                EGRESS ACTIVE
+              </span>
             </div>
           )}
 
@@ -233,7 +255,7 @@ const Activity: React.FC = () => {
                             {log.statusResult}
                           </span>
                           <span className="log-time-text">
-                            {log.createdAt}
+                            {formatLogTime(log.createdAt)}
                           </span>
                         </div>
                       </div>

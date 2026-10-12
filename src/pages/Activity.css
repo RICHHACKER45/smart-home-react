@@ -186,6 +186,9 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  box-sizing: border-box;
+  max-width: 100%;
+  overflow: hidden;
   transition: transform 0.15s ease, border-color 0.15s ease;
 }
 
@@ -198,29 +201,38 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
 }
 
 .log-category-tag {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
   font-size: 12px;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  min-width: 0;
 }
 
 .log-actor-name {
   font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
-  margin-left: 4px;
+  margin-left: 2px;
+  word-break: break-word;
 }
 
 .log-meta-right {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
 }
 
 .log-status-badge {
@@ -229,12 +241,14 @@
   border-radius: 6px;
   font-weight: 700;
   letter-spacing: 0.4px;
+  white-space: nowrap;
 }
 
 .log-time-text {
   font-size: 11px;
   color: var(--text-dim);
   font-family: monospace;
+  white-space: nowrap;
 }
 
 .log-action-text {
@@ -242,4 +256,7 @@
   font-size: 14px;
   line-height: 1.45;
   font-weight: 500;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  max-width: 100%;
 }

@@ -156,6 +156,7 @@ export const supabaseApi = {
       const data = await res.json();
       return data.map((d: any) => ({
         id: d.id,
+        ownerAccountId: d.owner_account_id,
         macAddress: d.mac_address,
         name: d.name,
         deviceType: d.device_type,

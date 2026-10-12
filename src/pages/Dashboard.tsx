@@ -61,7 +61,8 @@ const Dashboard: React.FC = () => {
     revokeDoorAuthorization,
     hardwareConnected,
     hardwareConfig,
-    simulationActive
+    simulationActive,
+    isDeveloperMode
   } = useStore();
 
   const [remainingMinutes, setRemainingMinutes] = useState<number>(0);
@@ -135,9 +136,14 @@ const Dashboard: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <IonIcon icon={warningOutline} style={{ fontSize: '28px', color: 'var(--danger)' }} />
                 <div>
-                  <h2 style={{ color: 'var(--danger)', margin: 0, fontSize: '18px' }}>🚨 EMERGENCY ALARM ACTIVE</h2>
+                  <h2 style={{ color: 'var(--danger)', margin: 0, fontSize: '18px' }}>
+                    {temperature >= 40 ? '🚨 CRITICAL HEAT EMERGENCY' : '🚨 EMERGENCY HAZARD ACTIVE'}
+                  </h2>
                   <p style={{ color: 'var(--text-dim)', margin: '4px 0 0 0', fontSize: '13px' }}>
-                    Smoke or extreme heat detected! Door failsafe has automatically unlocked for safety.
+                    {temperature >= 40 
+                      ? `Extreme ambient heat (${temperature.toFixed(1)}°C) detected! Front door lock has automatically unlocked for emergency exit.`
+                      : 'Smoke or hazardous conditions detected! Front door lock has automatically unlocked for emergency exit.'
+                    }
                   </p>
                 </div>
               </div>
@@ -150,9 +156,14 @@ const Dashboard: React.FC = () => {
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <IonIcon icon={wifiOutline} style={{ fontSize: '28px', color: 'var(--warning)' }} />
                 <div>
-                  <h2 style={{ color: 'var(--warning)', margin: 0, fontSize: '18px' }}>NO HARDWARE DETECTED</h2>
+                  <h2 style={{ color: 'var(--warning)', margin: 0, fontSize: '18px' }}>
+                    {isDeveloperMode ? 'NO HARDWARE DETECTED' : 'SMART HUB OFFLINE'}
+                  </h2>
                   <p style={{ color: 'var(--text-dim)', margin: '4px 0 0 0', fontSize: '13px' }}>
-                    The ESP32 Hub is unreachable. Showing 0 values. Please check power and network connection.
+                    {isDeveloperMode 
+                      ? `The ESP32 Hub at ${hardwareConfig.esp32Ip} is unreachable. Please check power and network connection.`
+                      : 'The Smart Home Hub is currently unreachable. Please check power and Wi-Fi connection.'
+                    }
                   </p>
                 </div>
               </div>

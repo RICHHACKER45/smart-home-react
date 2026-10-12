@@ -591,9 +591,11 @@ const Settings: React.FC = () => {
                     alignItems: 'center'
                   }}>
                     <div>
-                      <strong style={{ display: 'block', color: 'var(--text)', fontSize: '14px' }}>{d.name}</strong>
+                      <strong style={{ display: 'block', color: 'var(--text)', fontSize: '14px' }}>
+                        {isDeveloperMode ? d.name : d.name.replace(/\s*\([^)]*\)/g, '')}
+                      </strong>
                       <small style={{ color: 'var(--text-muted)', fontSize: '11px' }}>
-                        MAC: {d.macAddress} • {d.roomLocation}
+                        {isDeveloperMode ? `MAC: ${d.macAddress} • ` : ''}{d.roomLocation}
                       </small>
                     </div>
                     <div style={{ textAlign: 'right' }}>

@@ -72,6 +72,10 @@ export interface SmartHomeState {
 }
 
 export const useStore = create<SmartHomeState>((set, get) => {
+  let lastHumidityAlertTime = 0;
+  let lastTempAlertTime = 0;
+  const FIVE_MINUTES_MS = 5 * 60 * 1000;
+
   const checkSafetyRules = (state: Partial<SmartHomeState>) => {
     const current = get();
     const temp = state.temperature ?? current.temperature;
@@ -99,26 +103,27 @@ export const useStore = create<SmartHomeState>((set, get) => {
 
         if (isGasOrSmoke) {
           alertType = 'SMOKE_DETECTED';
-          reason = gasVal > 0 
-            ? `Smoke/Gas Spike: ${gasVal} ADC (Limit: ${gasThresh} ADC)` 
-            : 'Dense Smoke / Combustible Gas Detected';
+          reason = 'Smoke / Combustible Gas Hazard Detected';
         } else if (isHeat) {
           alertType = 'CRITICAL_HEAT';
-          reason = `Critical Ambient Heat: ${temp}°C (Limit: 40.0°C)`;
+          reason = `Critical Ambient Heat (${temp}°C)`;
         } else {
           alertType = 'MANUAL_PANIC';
-          reason = 'Real-time Hardware Emergency Siren Triggered';
+          reason = 'Hardware Emergency Siren Triggered';
         }
 
         dbService.createAlert(alertType, reason);
       }
     }
 
-    // Environmental climate threshold logging (clumped via dbService 45s filter to prevent bloat)
+    // Environmental climate threshold logging (strictly rate-limited to 5-minute intervals)
+    const now = Date.now();
     const hum = state.humidity !== undefined ? state.humidity : current.humidity;
-    if (hum >= 60) {
+    if (hum >= 60 && (now - lastHumidityAlertTime >= FIVE_MINUTES_MS)) {
+      lastHumidityAlertTime = now;
       dbService.logActivity('Climate Sensor', 'CLIMATE', `⚠️ High Humidity Warning: ${hum}% RH (Ventilation Recommended)`, 'TRIGGERED');
-    } else if (temp >= 35 && temp < 40) {
+    } else if (temp >= 35 && temp < 40 && (now - lastTempAlertTime >= FIVE_MINUTES_MS)) {
+      lastTempAlertTime = now;
       dbService.logActivity('Climate Sensor', 'CLIMATE', `🌡️ High Ambient Temperature: ${temp}°C`, 'TRIGGERED');
     }
 
@@ -236,20 +241,13 @@ export const useStore = create<SmartHomeState>((set, get) => {
     toggleDeveloperMode: (enable?: boolean) => {
       const next = enable !== undefined ? enable : !get().isDeveloperMode;
       localStorage.setItem('smart_home_dev_mode', next.toString());
-      if (!next) {
+      if (!next && get().simulationActive) {
         set({ 
           isDeveloperMode: false,
-          simulationActive: false,
-          temperature: 0,
-          humidity: 0,
-          signalStrength: 0,
-          networkHealth: 0,
-          latencyMs: 0,
-          hardwareConnected: false,
-          temperatureHistory: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+          simulationActive: false
         });
       } else {
-        set({ isDeveloperMode: true });
+        set({ isDeveloperMode: next });
       }
     },
 
@@ -365,13 +363,15 @@ export const useStore = create<SmartHomeState>((set, get) => {
     resetSystem: () => {
       document.body.classList.remove('emergency-mode');
       const state = get();
+      const wasAlarming = state.isAlarming;
       if (state.hardwareConfig.mode === 'hardware') {
         resetESP32Alarm(state.hardwareConfig.esp32Ip);
       }
       dbService.resolveAllAlerts();
       const actor = state.currentUser?.username || 'System';
-      dbService.logActivity(actor, 'EMERGENCY', '🚨 Emergency Cleared: System restored to normal and alarm silenced', 'SUCCESS');
-      dbService.logActivity(actor, 'SYSTEM', 'System emergency reset executed to normal state', 'SUCCESS');
+      if (wasAlarming) {
+        dbService.logActivity(actor, 'SYSTEM', 'System emergency reset executed to normal state', 'SUCCESS');
+      }
       set((s) => ({
         isLocked: true,
         temperature: 24.8,
