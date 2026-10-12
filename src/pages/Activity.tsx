@@ -10,27 +10,29 @@ import {
 } from '@ionic/react';
 import { 
   lockClosedOutline, 
+  lockOpenOutline,
   thermometerOutline, 
   warningOutline, 
   shieldCheckmarkOutline, 
   hardwareChipOutline,
-  refreshOutline,
   sparklesOutline,
-  layersOutline
+  layersOutline,
+  flameOutline,
+  waterOutline
 } from 'ionicons/icons';
 import { useStore } from '../store/useStore';
 import { EventCategory } from '../types/database';
 import './Activity.css';
 
 const Activity: React.FC = () => {
-  const { logs, clearDatabaseLogs } = useStore();
+  const { logs, isAlarming, resetSystem } = useStore();
   const [selectedFilter, setSelectedFilter] = useState<string>('ALL');
 
   const categories = [
     { id: 'ALL', label: 'All Logs', icon: layersOutline },
+    { id: 'EMERGENCY', label: 'Emergency', icon: warningOutline },
     { id: 'DOOR', label: 'Door', icon: lockClosedOutline },
     { id: 'CLIMATE', label: 'Climate', icon: thermometerOutline },
-    { id: 'EMERGENCY', label: 'Emergency', icon: warningOutline },
     { id: 'AUTH', label: 'Security & PIN', icon: shieldCheckmarkOutline },
     { id: 'SYSTEM', label: 'System Hub', icon: hardwareChipOutline }
   ];
@@ -52,7 +54,7 @@ const Activity: React.FC = () => {
       case 'CLIMATE':
         return thermometerOutline;
       case 'EMERGENCY':
-        return warningOutline;
+        return flameOutline;
       case 'AUTH':
         return shieldCheckmarkOutline;
       case 'SYSTEM':
@@ -85,7 +87,7 @@ const Activity: React.FC = () => {
       return { background: 'rgba(244, 63, 94, 0.2)', color: '#fb7185', border: '1px solid rgba(244, 63, 94, 0.4)' };
     }
     if (result === 'TRIGGERED') {
-      return { background: 'rgba(245, 158, 11, 0.2)', color: '#fbbf24', border: '1px solid rgba(245, 158, 11, 0.4)' };
+      return { background: 'rgba(244, 63, 94, 0.25)', color: '#f43f5e', border: '1px solid rgba(244, 63, 94, 0.5)' };
     }
     return { background: 'rgba(148, 163, 184, 0.2)', color: '#cbd5e1', border: '1px solid rgba(148, 163, 184, 0.3)' };
   };
@@ -110,20 +112,38 @@ const Activity: React.FC = () => {
           <div className="activity-header-bar">
             <div>
               <h1 className="activity-title-main">System Audit Trail</h1>
-              <div className="activity-subtitle">Real-time hardware, security & safety events</div>
+              <div className="activity-subtitle">Real-time hardware, security & safety events • Immutable Audit Record</div>
             </div>
-            <IonButton 
-              size="small" 
-              fill="outline" 
-              color="medium" 
-              onClick={clearDatabaseLogs} 
-              title="Factory Reset DB Logs"
-              style={{ '--border-radius': '10px' }}
-            >
-              <IonIcon icon={refreshOutline} slot="start" />
-              Reset
-            </IonButton>
           </div>
+
+          {/* Active Emergency Strip (Only visible when emergency is ongoing) */}
+          {isAlarming && (
+            <div style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              background: 'rgba(244, 63, 94, 0.15)',
+              border: '1.5px solid var(--danger)',
+              borderRadius: '12px',
+              padding: '10px 14px',
+              marginBottom: '16px'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <IonIcon icon={flameOutline} style={{ color: 'var(--danger)', fontSize: '22px' }} />
+                <div>
+                  <div style={{ fontSize: '13px', fontWeight: 'bold', color: 'var(--danger)' }}>
+                    🚨 Emergency Hazard In Progress
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
+                    Buzzer siren active & door failsafe egress unlocked
+                  </div>
+                </div>
+              </div>
+              <IonButton size="small" color="success" onClick={resetSystem}>
+                Silence / Reset
+              </IonButton>
+            </div>
+          )}
 
           {/* Overhauled High-Contrast Filter Tabs */}
           <div className="activity-tabs-scroll">
@@ -145,7 +165,7 @@ const Activity: React.FC = () => {
             })}
           </div>
 
-          {/* Log List Card */}
+          {/* Unified Log List Card */}
           <div className="card" style={{ padding: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
               <h2 style={{ margin: 0, fontSize: '16px', color: '#f8fafc', fontWeight: '700' }}>
@@ -169,13 +189,16 @@ const Activity: React.FC = () => {
                   No Log Entries Found
                 </strong>
                 <p style={{ color: 'var(--text-muted)', fontSize: '12px', margin: '4px 0 0 0' }}>
-                  No activity has been recorded yet for this category.
+                  No activity has been recorded yet for the {categories.find(c => c.id === selectedFilter)?.label || selectedFilter} category.
                 </p>
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                 {filteredLogs.map((log) => {
                   const catColor = getCategoryColor(log.eventCategory);
+                  const isDoor = log.eventCategory === 'DOOR';
+                  const isClimate = log.eventCategory === 'CLIMATE';
+                  const isEmergency = log.eventCategory === 'EMERGENCY';
                   return (
                     <div 
                       key={log.id} 
@@ -187,7 +210,13 @@ const Activity: React.FC = () => {
                     >
                       <div className="log-item-header">
                         <div className="log-category-tag" style={{ color: catColor }}>
-                          <IonIcon icon={getCategoryIcon(log.eventCategory)} />
+                          <IonIcon icon={
+                            isEmergency ? flameOutline : (
+                              isDoor ? (log.actionDescription.toLowerCase().includes('unlock') ? lockOpenOutline : lockClosedOutline) : (
+                                isClimate ? waterOutline : getCategoryIcon(log.eventCategory)
+                              )
+                            )
+                          } />
                           <span>{log.eventCategory}</span>
                           {log.actorName && (
                             <span className="log-actor-name">
@@ -209,7 +238,9 @@ const Activity: React.FC = () => {
                         </div>
                       </div>
 
-                      <div className="log-action-text">
+                      <div className="log-action-text" style={{
+                        color: isEmergency ? 'var(--text)' : 'var(--text)'
+                      }}>
                         {log.actionDescription}
                       </div>
                     </div>

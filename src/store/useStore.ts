@@ -77,29 +77,49 @@ export const useStore = create<SmartHomeState>((set, get) => {
     const temp = state.temperature ?? current.temperature;
     const gasVal = state.gasValue !== undefined ? state.gasValue : (current.gasValue || 0);
     const gasThresh = state.gasThreshold !== undefined ? state.gasThreshold : (current.gasThreshold || 1800);
-    const smoke = (state.smokeActive ?? current.smokeActive) || (gasVal >= gasThresh && gasVal > 0);
-    
+    // Check if hazard is detected by real-time hardware telemetry or sensors
+    const isGasOrSmoke = (state.smokeActive ?? current.smokeActive) || (gasVal >= gasThresh && gasVal > 0);
+    const isHeat = temp >= 40;
+    const isHardwareAlarm = Boolean(state.isAlarming);
+    const hazardDetected = isGasOrSmoke || isHeat || isHardwareAlarm;
+
+    const wasAlarming = current.isAlarming;
     let isAlarming = state.isAlarming !== undefined ? state.isAlarming : current.isAlarming;
     let isLocked = state.isLocked ?? current.isLocked;
 
-    // Simulated/local triggers based on data thresholds
-    if (temp >= 40 || smoke) {
-      if (!isAlarming) {
-        let reason = '';
-        if (smoke) {
-          reason = gasVal >= gasThresh 
-            ? `Smoke/Gas Spike (${gasVal} ADC / Limit: ${gasThresh})` 
-            : 'Dense Smoke Detected (MQ-2 Spike)';
-        } else {
-          reason = `Critical Heat (${temp}°C / Limit: 40.0°C)`;
-        }
-        dbService.createAlert(
-          smoke ? 'SMOKE_DETECTED' : 'CRITICAL_HEAT', 
-          reason
-        );
-      }
+    // Real-time detector trigger: record incident and engage safety egress
+    if (hazardDetected) {
       isAlarming = true;
-      isLocked = false;
+      isLocked = false; // Auto-unlock door for safe emergency egress
+
+      // If system was not already alarming, capture real-time detector data
+      if (!wasAlarming) {
+        let reason = '';
+        let alertType: 'SMOKE_DETECTED' | 'CRITICAL_HEAT' | 'MANUAL_PANIC' = 'SMOKE_DETECTED';
+
+        if (isGasOrSmoke) {
+          alertType = 'SMOKE_DETECTED';
+          reason = gasVal > 0 
+            ? `Smoke/Gas Spike: ${gasVal} ADC (Limit: ${gasThresh} ADC)` 
+            : 'Dense Smoke / Combustible Gas Detected';
+        } else if (isHeat) {
+          alertType = 'CRITICAL_HEAT';
+          reason = `Critical Ambient Heat: ${temp}°C (Limit: 40.0°C)`;
+        } else {
+          alertType = 'MANUAL_PANIC';
+          reason = 'Real-time Hardware Emergency Siren Triggered';
+        }
+
+        dbService.createAlert(alertType, reason);
+      }
+    }
+
+    // Environmental climate threshold logging (clumped via dbService 45s filter to prevent bloat)
+    const hum = state.humidity !== undefined ? state.humidity : current.humidity;
+    if (hum >= 60) {
+      dbService.logActivity('Climate Sensor', 'CLIMATE', `⚠️ High Humidity Warning: ${hum}% RH (Ventilation Recommended)`, 'TRIGGERED');
+    } else if (temp >= 35 && temp < 40) {
+      dbService.logActivity('Climate Sensor', 'CLIMATE', `🌡️ High Ambient Temperature: ${temp}°C`, 'TRIGGERED');
     }
 
     // Explicitly add or remove the emergency class based on final state
@@ -113,7 +133,7 @@ export const useStore = create<SmartHomeState>((set, get) => {
       ...state, 
       isAlarming, 
       isLocked,
-      smokeActive: smoke,
+      smokeActive: isGasOrSmoke,
       logs: dbService.getActivityLogs(),
       alerts: dbService.getAlerts()
     };
@@ -348,8 +368,10 @@ export const useStore = create<SmartHomeState>((set, get) => {
       if (state.hardwareConfig.mode === 'hardware') {
         resetESP32Alarm(state.hardwareConfig.esp32Ip);
       }
+      dbService.resolveAllAlerts();
       const actor = state.currentUser?.username || 'System';
-      dbService.logActivity(actor, 'SYSTEM', 'System emergency reset executed to normal state');
+      dbService.logActivity(actor, 'EMERGENCY', '🚨 Emergency Cleared: System restored to normal and alarm silenced', 'SUCCESS');
+      dbService.logActivity(actor, 'SYSTEM', 'System emergency reset executed to normal state', 'SUCCESS');
       set((s) => ({
         isLocked: true,
         temperature: 24.8,

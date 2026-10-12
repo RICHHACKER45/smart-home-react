@@ -477,6 +477,17 @@ class DatabaseService {
   ): ActivityLog {
     const logs = this.getActivityLogs();
     const session = this.getCurrentSession();
+
+    // Event Clumping: Prevent spamming duplicate identical events within 45s to stop UI & DB bloating
+    if (logs.length > 0) {
+      const latest = logs[0];
+      const isSameAction = latest.eventCategory === eventCategory && latest.actionDescription === actionDescription;
+      const isRecent = (Date.now() - latest.id) < 45000;
+      if (isSameAction && isRecent) {
+        return latest;
+      }
+    }
+
     const newLog: ActivityLog = {
       id: Date.now(),
       accountId: session?.id,
@@ -503,6 +514,13 @@ class DatabaseService {
 
   createAlert(type: EmergencyAlert['alertType'], peakValue: string): EmergencyAlert {
     const alerts = this.getAlerts();
+    
+    // Clump repeated active alerts of same type within 45s to avoid database/UI bloat
+    const existingActive = alerts.find(a => a.alertType === type && a.status === 'TRIGGERED' && (Date.now() - a.id) < 45000);
+    if (existingActive) {
+      return existingActive;
+    }
+
     const newAlert: EmergencyAlert = {
       id: Date.now(),
       deviceId: 'dev-smoke-01',
@@ -512,13 +530,26 @@ class DatabaseService {
       status: 'TRIGGERED',
       triggeredAt: new Date().toISOString()
     };
-    this.setItem('alerts', [newAlert, ...alerts]);
-    this.logActivity('Emergency Failsafe', 'EMERGENCY', `🚨 ${type}: ${peakValue} (Failsafe Auto-Unlock Activated)`, 'TRIGGERED');
+    this.setItem('alerts', [newAlert, ...alerts].slice(0, 50));
+    
+    // Put emergency alarm directly into the EMERGENCY audit trail
+    this.logActivity(
+      'Emergency Failsafe', 
+      'EMERGENCY', 
+      `🚨 ${type === 'SMOKE_DETECTED' ? 'Smoke/Gas Hazard' : 'Critical Heat'}: ${peakValue} (Failsafe Auto-Unlock Engaged)`, 
+      'TRIGGERED'
+    );
 
     // Sync Alert to Supabase Cloud DB
     supabaseApi.createEmergencyAlert('dev-smoke-01', type, peakValue).catch(() => {});
 
     return newAlert;
+  }
+
+  resolveAllAlerts(): void {
+    const alerts = this.getAlerts();
+    const updated = alerts.map(a => a.status === 'TRIGGERED' ? { ...a, status: 'RESOLVED' as const, resolvedAt: new Date().toISOString() } : a);
+    this.setItem('alerts', updated);
   }
 
   // --- TESTING & QA UTILITIES ---

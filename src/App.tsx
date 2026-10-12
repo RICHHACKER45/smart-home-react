@@ -11,13 +11,14 @@ import {
   setupIonicReact
 } from '@ionic/react';
 import { IonReactRouter } from '@ionic/react-router';
-import { home, thermometer, list, settings } from 'ionicons/icons';
+import { home, thermometer, list, settings, statsChart } from 'ionicons/icons';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Climate from './pages/Climate';
+import Analytics from './pages/Analytics';
 import Activity from './pages/Activity';
 import Settings from './pages/Settings';
 import { useStore } from './store/useStore';
@@ -94,6 +95,7 @@ const App: React.FC = () => {
             <IonRouterOutlet>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/climate" element={<Climate />} />
+              <Route path="/analytics" element={<Analytics />} />
               <Route path="/activity" element={<Activity />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -107,6 +109,10 @@ const App: React.FC = () => {
               <IonTabButton tab="climate" href="/climate">
                 <IonIcon aria-hidden="true" icon={thermometer} style={{ color: '#f43f5e' }} />
                 <IonLabel>Climate</IonLabel>
+              </IonTabButton>
+              <IonTabButton tab="analytics" href="/analytics">
+                <IonIcon aria-hidden="true" icon={statsChart} style={{ color: '#a855f7' }} />
+                <IonLabel>Analytics</IonLabel>
               </IonTabButton>
               <IonTabButton tab="activity" href="/activity">
                 <IonIcon aria-hidden="true" icon={list} style={{ color: '#f59e0b' }} />
