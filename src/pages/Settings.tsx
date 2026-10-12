@@ -51,6 +51,7 @@ const Settings: React.FC = () => {
     increaseTemp, 
     setExactTemperature,
     setExactHumidity,
+    simulateElevatedHumidity,
     simulateSmoke, 
     simulateExtremeHeat,
     resetSystem, 
@@ -795,6 +796,14 @@ const Settings: React.FC = () => {
                     <IonButton expand="block" color="danger" fill="outline" onClick={simulateExtremeHeat}>
                       Simulate Extreme Heat (55°C Spike)
                     </IonButton>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                      <IonButton expand="block" color="warning" fill="outline" size="small" onClick={() => simulateElevatedHumidity(65)}>
+                        Warn Humid (65%)
+                      </IonButton>
+                      <IonButton expand="block" color="warning" size="small" onClick={() => simulateElevatedHumidity(75)}>
+                        High Humid (75%)
+                      </IonButton>
+                    </div>
                     <IonButton expand="block" color="success" onClick={resetSystem}>
                       <IonIcon icon={refreshOutline} slot="start" />
                       Reset Emergency System to Normal
